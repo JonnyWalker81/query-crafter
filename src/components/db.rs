@@ -46,6 +46,7 @@ pub struct Db<'a> {
   horizonal_scroll_offset: usize,
   show_row_details: bool,
   table_search_query: String,
+  table_search_view: Vec<String>,
 }
 
 impl<'a> Db<'a> {
@@ -72,6 +73,14 @@ impl<'a> Db<'a> {
     let json_str = serde_json::to_string_pretty(&row_data).unwrap();
     Some(json_str)
   }
+
+  fn table_row_count(&self) -> usize {
+    if self.table_search_query.is_empty() {
+      self.tables.len()
+    } else {
+      self.table_search_view.len()
+    }
+  }
 }
 
 impl<'a> Component for Db<'a> {
@@ -90,6 +99,22 @@ impl<'a> Component for Db<'a> {
     match self.selected_component {
       ComponentKind::Home => {
         // Searching for a table
+        match key.code {
+          KeyCode::Char(c) => {
+            self.table_search_query.push(c);
+            self.table_search_view = self
+              .tables
+              .iter()
+              .filter(|t| t.name.contains(&self.table_search_query))
+              .map(|t| t.name.to_string())
+              .collect();
+          },
+          KeyCode::Esc => {
+            self.table_search_query.clear();
+            self.table_search_view.clear();
+          },
+          _ => {},
+        }
       },
       ComponentKind::Query => {
         // println!("input: {}", c);
@@ -120,7 +145,6 @@ impl<'a> Component for Db<'a> {
           _ => {},
         }
       },
-      _ => {},
     }
 
     Ok(None)
@@ -133,7 +157,7 @@ impl<'a> Component for Db<'a> {
         self.tables = tables;
       },
       Action::TableMoveDown => {
-        if self.selected_table_index < self.tables.len() {
+        if self.selected_table_index < self.table_row_count() {
           self.selected_table_index += 1;
         } else {
           self.selected_table_index = 0;
@@ -143,7 +167,7 @@ impl<'a> Component for Db<'a> {
         if self.selected_table_index > 0 {
           self.selected_table_index -= 1;
         } else {
-          self.selected_table_index = self.tables.len() - 1;
+          self.selected_table_index = self.table_row_count() - 1;
         }
       },
       Action::ScrollTableLeft => {
@@ -248,7 +272,12 @@ impl<'a> Component for Db<'a> {
 
     let mut table_list_state = ListState::default();
     table_list_state.select(Some(self.selected_table_index));
-    let items: Vec<ListItem> = self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect();
+    let items: Vec<ListItem> = if self.table_search_query.is_empty() {
+      self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect()
+    } else {
+      self.table_search_view.iter().map(|t| ListItem::new(t.to_string())).collect()
+    };
+
     let list = List::new(items)
       .block(tables)
       .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD));
