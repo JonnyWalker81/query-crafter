@@ -1,0 +1,49 @@
+[package]
+name = "query-crafter"
+version = "0.1.0"
+edition = "2021"
+description = "TUI for interacting with a database"
+repository = "https://github.com/JonnyWalker81/query-crafter"
+authors = ["Jonathan Rothberg <jon@join.build>"]
+build = "build.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+arboard = "3.3.0"
+better-panic = "0.3.0"
+chrono = "0.4.31"
+clap = { version = "4.4.5", features = ["derive", "cargo", "wrap_help", "unicode", "string", "unstable-styles"] }
+color-eyre = "0.6.2"
+config = "0.13.3"
+crossterm = { version = "0.27.0", features = ["serde", "event-stream"] }
+derive_deref = "1.1.1"
+directories = "5.0.1"
+futures = "0.3.28"
+human-panic = "1.2.0"
+json5 = "0.4.1"
+lazy_static = "1.4.0"
+libc = "0.2.148"
+log = "0.4.20"
+pretty_assertions = "1.4.0"
+ratatui = { version = "0.25.0", features = ["serde", "macros"] }
+ratatui-textarea = {git = "https://github.com/JonnyWalker81/ratatui-textarea.git"}
+rust_decimal = "1.33.1"
+serde = { version = "1.0.188", features = ["derive"] }
+serde_json = "1.0.107"
+signal-hook = "0.3.17"
+sqlx = {version = "0.7.3", features = ["runtime-tokio", "tls-rustls", "chrono", "json", "rust_decimal", "uuid", "postgres"] }
+strip-ansi-escapes = "0.2.0"
+strum = { version = "0.25.0", features = ["derive"] }
+tokio = { version = "1.32.0", features = ["full", "time"] }
+tokio-stream = "0.1.14"
+tokio-timer = "0.2.13"
+tokio-util = "0.7.9"
+toml = "0.8.8"
+tracing = "0.1.37"
+tracing-error = "0.2.0"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter", "serde"] }
+tui-popup = "0.2.2"
+
+[build-dependencies]
+vergen = { version = "8.2.6", features = [ "build", "git", "gitoxide", "cargo" ]}
