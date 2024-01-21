@@ -46,7 +46,6 @@ pub struct Db<'a> {
   horizonal_scroll_offset: usize,
   show_row_details: bool,
   table_search_query: String,
-  table_search_view: Vec<String>,
   is_searching_tables: bool,
 }
 
@@ -92,7 +91,6 @@ impl<'a> Component for Db<'a> {
   }
 
   fn handle_key_events(&mut self, key: KeyEvent) -> Result<Option<Action>> {
-    // println!("key: {:?}", key);
     match self.selected_component {
       ComponentKind::Home => {
         // Searching for a table
@@ -106,13 +104,6 @@ impl<'a> Component for Db<'a> {
               self.table_search_query.push(c);
               return Ok(Some(Action::LoadTables(self.table_search_query.clone())));
             }
-
-            // self.table_search_view = self
-            //   .tables
-            //   .iter()
-            //   .filter(|t| t.name.contains(&self.table_search_query))
-            //   .map(|t| t.name.to_string())
-            //   .collect();
           },
           KeyCode::Enter => {
             if self.is_searching_tables {
@@ -124,22 +115,18 @@ impl<'a> Component for Db<'a> {
           },
           KeyCode::Esc => {
             self.table_search_query.clear();
-            self.table_search_view.clear();
             self.is_searching_tables = false;
           },
           _ => {},
         }
       },
       ComponentKind::Query => {
-        // println!("input: {}", c);
-        // self.query_input.input(Input { key: , ctrl: false, alt: false });
         match key {
           KeyEvent { modifiers: KeyModifiers::CONTROL, code: KeyCode::Enter, .. } => {
             return Ok(Some(Action::HandleQuery(self.query_input.lines().join(" "))));
           },
           _ => {
             let input = Input::from(key);
-            // println!("input: {:?}", input);
             self.query_input.input(input);
           },
         }
@@ -190,7 +177,6 @@ impl<'a> Component for Db<'a> {
         }
       },
       Action::ScrollTableRight => {
-        // if self.horizonal_scroll_offset < self.column_count() - VISIBLE_COLUMNS {
         if self.selected_component == ComponentKind::Results
           && self.horizonal_scroll_offset * VISIBLE_COLUMNS < self.column_count() - VISIBLE_COLUMNS
         {
@@ -212,7 +198,6 @@ impl<'a> Component for Db<'a> {
       },
       Action::LoadSelectedTable => {
         if let Some(selected_table) = self.tables.get(self.selected_table_index) {
-          // return Ok(Some(Action::LoadTable(selected_table.name.clone())));
           let query = format!("SELECT * FROM {}", selected_table.name);
           self.query_input.insert_str(&query);
           return Ok(Some(Action::HandleQuery(query)));
@@ -228,17 +213,14 @@ impl<'a> Component for Db<'a> {
         return Ok(Some(Action::SelectComponent(ComponentKind::Results)));
       },
       Action::FocusQuery => {
-        // println!("focus query");
         self.selected_component = ComponentKind::Query;
         return Ok(Some(Action::SelectComponent(ComponentKind::Query)));
       },
       Action::FocusResults => {
-        // println!("focus results");
         self.selected_component = ComponentKind::Results;
         return Ok(Some(Action::SelectComponent(ComponentKind::Results)));
       },
       Action::FocusHome => {
-        // println!("focus home");
         self.selected_component = ComponentKind::Home;
         return Ok(Some(Action::SelectComponent(ComponentKind::Home)));
       },
@@ -255,15 +237,10 @@ impl<'a> Component for Db<'a> {
   }
 
   fn draw(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
-    // f.render_widget(Paragraph::new("db"), area);
     // Create the layout sections.
     let chunks = Layout::default()
       .direction(Direction::Vertical)
-      .constraints([
-        Constraint::Length(3),
-        Constraint::Min(1),
-        // Constraint::Length(3),
-      ])
+      .constraints([Constraint::Length(3), Constraint::Min(1)])
       .split(f.size());
 
     let title_block = Block::default().borders(Borders::ALL).style(Style::default());
@@ -321,8 +298,6 @@ impl<'a> Component for Db<'a> {
     let border_style = Style::default().fg(query_border_color);
     let input_block = Block::default().borders(Borders::ALL).border_style(border_style).title("Query");
     let style = ratatui::style::Style::default().bg(query_border_color).add_modifier(Modifier::REVERSED);
-    // self.query_input.set_cursor_style(style);
-    // self.query_input.set_style(style);
     self.query_input.set_block(input_block);
 
     f.render_widget(self.query_input.widget(), query_chunks[0]);

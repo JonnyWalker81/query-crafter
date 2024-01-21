@@ -236,7 +236,6 @@ async fn load_tables(
   tx: tokio::sync::mpsc::UnboundedSender<Action>,
   search: &str,
 ) -> Result<()> {
-  // println!("load_tabled called...");
   let mut rows =
     sqlx::query("SELECT * FROM information_schema.tables WHERE table_catalog = $1").bind("postgres").fetch(pool);
 
@@ -244,17 +243,8 @@ async fn load_tables(
   while let Ok(Some(row)) = rows.try_next().await {
     let name: String = row.try_get("table_name").unwrap_or_default();
     let schema: String = row.try_get("table_schema").unwrap_or_default();
-    // println!("table: {} ({})", name, schema);
     tables.push(DbTable { name, schema });
-    // tables.push(Table {
-    //     name: row.try_get("table_name")?,
-    //     create_time: None,
-    //     update_time: None,
-    //     engine: None,
-    //     schema: row.try_get("table_schema")?,
-    // })
   }
-  // println!("tables: {:?}", tables.len());
 
   tables.sort_by(|a, b| a.name.cmp(&b.name));
   let t = if search.is_empty() { tables } else { tables.iter().filter(|t| t.name.contains(search)).cloned().collect() };
@@ -265,17 +255,13 @@ async fn load_tables(
 }
 
 fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, pool: sqlx::Pool<sqlx::Postgres>) -> Result<()> {
-  // if let Some(tx) = &self.io_tx {
-  //   Self::get_tables(self.pool.clone(), tx.clone()).await?
-  // }
   tokio::spawn(async move {
     let pool = pool.clone();
     thread::sleep(Duration::from_millis(200));
 
-    let _ = load_tables(&pool, tx, "").await;
-    // if let Err(e) = tx.send(Action::LoadTables) {
-    //   println!("Error sending load table event.");
-    // }
+    if let Err(e) = load_tables(&pool, tx, "").await {
+      println!("Error sending load table event.");
+    }
   });
   Ok(())
 }
