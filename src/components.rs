@@ -13,6 +13,7 @@ use crate::{
 pub mod db;
 pub mod fps;
 pub mod home;
+pub mod vim;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub enum ComponentKind {

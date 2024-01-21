@@ -2459,7 +2459,6 @@ dependencies = [
  "log",
  "pretty_assertions",
  "ratatui",
- "ratatui-textarea",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -2476,6 +2475,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tui-popup",
+ "tui-textarea",
  "vergen",
 ]
 
@@ -2542,15 +2542,6 @@ dependencies = [
  "strum",
  "unicode-segmentation",
  "unicode-width",
-]
-
-[[package]]
-name = "ratatui-textarea"
-version = "0.4.0"
-source = "git+https://github.com/JonnyWalker81/ratatui-textarea.git#14ceb222675ff821c55ea6b5434c968d03dd0947"
-dependencies = [
- "crossterm",
- "ratatui",
 ]
 
 [[package]]
@@ -3640,6 +3631,17 @@ dependencies = [
  "derive-getters",
  "derive_setters",
  "ratatui",
+]
+
+[[package]]
+name = "tui-textarea"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3e38ced1f941a9cfc923fbf2fe6858443c42cc5220bfd35bdd3648371e7bd8e"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "unicode-width",
 ]
 
 [[package]]

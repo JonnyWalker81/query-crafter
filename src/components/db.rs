@@ -10,17 +10,21 @@ use arboard::SetExtLinux;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, widgets::*};
-use ratatui_textarea::{Input, TextArea};
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, Postgres, Row};
 use strum::Display;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::StreamExt;
 use tui_popup::Popup;
+use tui_textarea::{Input, TextArea};
 
-use super::{Component, ComponentKind, Frame};
+use super::{
+  vim::{Mode, Transition},
+  Component, ComponentKind, Frame,
+};
 use crate::{
   action::Action,
+  components::vim::Vim,
   config::{Config, KeyBindings},
 };
 
@@ -43,6 +47,7 @@ pub struct Db<'a> {
   query_results: Vec<Vec<String>>,
   selected_component: ComponentKind,
   query_input: TextArea<'a>,
+  vim_editor: Vim,
   horizonal_scroll_offset: usize,
   show_row_details: bool,
   table_search_query: String,
@@ -121,14 +126,23 @@ impl<'a> Component for Db<'a> {
         }
       },
       ComponentKind::Query => {
-        match key {
-          KeyEvent { modifiers: KeyModifiers::CONTROL, code: KeyCode::Enter, .. } => {
+        let transition = self.vim_editor.transition(Input::from(key), &mut self.query_input);
+        match transition {
+          Transition::Mode(mode) if self.vim_editor.mode() != mode => {
+            self.query_input.set_cursor_style(mode.cursor_style());
+            self.vim_editor = Vim::new(mode);
+          },
+          Transition::Nop | Transition::Mode(_) => {},
+          Transition::Pending(ref input) => {
+            let v = self.vim_editor.clone();
+            let vim_editor = v.with_pending(input);
+          },
+          Transition::Quit => {},
+        }
+        if let Transition::Pending(ref input) = transition {
+          if self.vim_editor.mode() == Mode::Normal && key.code == KeyCode::Enter {
             return Ok(Some(Action::HandleQuery(self.query_input.lines().join(" "))));
-          },
-          _ => {
-            let input = Input::from(key);
-            self.query_input.input(input);
-          },
+          }
         }
       },
       ComponentKind::Results => {
