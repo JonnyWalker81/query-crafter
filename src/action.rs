@@ -27,7 +27,7 @@ pub enum Action {
   ScrollTableLeft,
   ScrollTableRight,
   LoadSelectedTable,
-  LoadTables,
+  LoadTables(String),
   LoadTable(String),
   QueryResult(Vec<String>, Vec<Vec<String>>),
   FocusQuery,

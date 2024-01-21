@@ -47,6 +47,7 @@ pub struct Db<'a> {
   show_row_details: bool,
   table_search_query: String,
   table_search_view: Vec<String>,
+  is_searching_tables: bool,
 }
 
 impl<'a> Db<'a> {
@@ -75,11 +76,7 @@ impl<'a> Db<'a> {
   }
 
   fn table_row_count(&self) -> usize {
-    if self.table_search_query.is_empty() {
-      self.tables.len()
-    } else {
-      self.table_search_view.len()
-    }
+    self.tables.len()
   }
 }
 
@@ -101,17 +98,34 @@ impl<'a> Component for Db<'a> {
         // Searching for a table
         match key.code {
           KeyCode::Char(c) => {
-            self.table_search_query.push(c);
-            self.table_search_view = self
-              .tables
-              .iter()
-              .filter(|t| t.name.contains(&self.table_search_query))
-              .map(|t| t.name.to_string())
-              .collect();
+            if c == '/' {
+              self.is_searching_tables = true;
+            }
+
+            if self.is_searching_tables && c != '/' {
+              self.table_search_query.push(c);
+              return Ok(Some(Action::LoadTables(self.table_search_query.clone())));
+            }
+
+            // self.table_search_view = self
+            //   .tables
+            //   .iter()
+            //   .filter(|t| t.name.contains(&self.table_search_query))
+            //   .map(|t| t.name.to_string())
+            //   .collect();
+          },
+          KeyCode::Enter => {
+            if self.is_searching_tables {
+              self.is_searching_tables = false;
+            }
+          },
+          KeyCode::Backspace => {
+            self.table_search_query.pop();
           },
           KeyCode::Esc => {
             self.table_search_query.clear();
             self.table_search_view.clear();
+            self.is_searching_tables = false;
           },
           _ => {},
         }
@@ -121,7 +135,6 @@ impl<'a> Component for Db<'a> {
         // self.query_input.input(Input { key: , ctrl: false, alt: false });
         match key {
           KeyEvent { modifiers: KeyModifiers::CONTROL, code: KeyCode::Enter, .. } => {
-            println!("execute query, ctrl-enter");
             return Ok(Some(Action::HandleQuery(self.query_input.lines().join(" "))));
           },
           _ => {
@@ -167,7 +180,8 @@ impl<'a> Component for Db<'a> {
         if self.selected_table_index > 0 {
           self.selected_table_index -= 1;
         } else {
-          self.selected_table_index = self.table_row_count() - 1;
+          self.selected_table_index =
+            (self.table_row_count() as i32 - 1i32).clamp(0, self.table_row_count() as i32 - 1) as usize;
         }
       },
       Action::ScrollTableLeft => {
@@ -270,18 +284,33 @@ impl<'a> Component for Db<'a> {
       .title("Tables")
       .border_type(BorderType::Plain);
 
+    let table_list_chunks = if self.is_searching_tables {
+      Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
+        .split(table_chunks[0])
+    } else {
+      table_chunks.clone()
+    };
+
+    if self.is_searching_tables {
+      let search_block = Block::default().borders(Borders::ALL).title("Search");
+      let search_text =
+        Paragraph::new(Text::styled(format!("{}", self.table_search_query), Style::default().fg(Color::Yellow)))
+          .block(search_block);
+      f.render_widget(search_text, table_list_chunks[0]);
+    }
+
+    let table_render_chunk = if self.is_searching_tables { table_list_chunks[1] } else { table_list_chunks[0] };
+
     let mut table_list_state = ListState::default();
     table_list_state.select(Some(self.selected_table_index));
-    let items: Vec<ListItem> = if self.table_search_query.is_empty() {
-      self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect()
-    } else {
-      self.table_search_view.iter().map(|t| ListItem::new(t.to_string())).collect()
-    };
+    let items: Vec<ListItem> = self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect();
 
     let list = List::new(items)
       .block(tables)
       .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD));
-    f.render_stateful_widget(list, table_chunks[0], &mut table_list_state);
+    f.render_stateful_widget(list, table_render_chunk, &mut table_list_state);
 
     let query_chunks = Layout::default()
       .direction(Direction::Vertical)

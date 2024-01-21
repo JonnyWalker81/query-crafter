@@ -172,9 +172,9 @@ impl App {
             let q = format!("SELECT * from {}", table_name);
             query(&q, action_tx.clone(), self.pool.clone()).await?;
           },
-          Action::LoadTables => {
+          Action::LoadTables(ref search) => {
             // println!("Load Tables");
-            load_tables(&self.pool, action_tx.clone()).await?;
+            load_tables(&self.pool, action_tx.clone(), search).await?;
           },
           Action::SelectComponent(ref kind) => {
             match kind {
@@ -231,7 +231,11 @@ async fn dispatch(tx: tokio::sync::mpsc::UnboundedSender<Action>, action: Action
   Ok(())
 }
 
-async fn load_tables(pool: &sqlx::Pool<sqlx::Postgres>, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+async fn load_tables(
+  pool: &sqlx::Pool<sqlx::Postgres>,
+  tx: tokio::sync::mpsc::UnboundedSender<Action>,
+  search: &str,
+) -> Result<()> {
   // println!("load_tabled called...");
   let mut rows =
     sqlx::query("SELECT * FROM information_schema.tables WHERE table_catalog = $1").bind("postgres").fetch(pool);
@@ -253,7 +257,9 @@ async fn load_tables(pool: &sqlx::Pool<sqlx::Postgres>, tx: tokio::sync::mpsc::U
   // println!("tables: {:?}", tables.len());
 
   tables.sort_by(|a, b| a.name.cmp(&b.name));
-  dispatch(tx, Action::TablesLoaded(tables)).await?;
+  let t = if search.is_empty() { tables } else { tables.iter().filter(|t| t.name.contains(search)).cloned().collect() };
+
+  dispatch(tx, Action::TablesLoaded(t)).await?;
 
   Ok(())
 }
@@ -266,7 +272,7 @@ fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, pool: sqlx::Pool<sqlx::P
     let pool = pool.clone();
     thread::sleep(Duration::from_millis(200));
 
-    let _ = load_tables(&pool, tx).await;
+    let _ = load_tables(&pool, tx, "").await;
     // if let Err(e) = tx.send(Action::LoadTables) {
     //   println!("Error sending load table event.");
     // }
