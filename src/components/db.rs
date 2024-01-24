@@ -1,6 +1,7 @@
 use std::{
   collections::{BTreeMap, HashMap},
   fmt::Display,
+  rc::Rc,
   time::Duration,
 };
 
@@ -81,6 +82,123 @@ impl<'a> Db<'a> {
 
   fn table_row_count(&self) -> usize {
     self.tables.len()
+  }
+
+  fn render_table_list(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    let table_chunks = Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
+      .split(chunks[1]);
+
+    let tables_border_color = if self.selected_component == ComponentKind::Home { Color::Cyan } else { Color::White };
+    let tables = Block::default()
+      .borders(Borders::ALL)
+      .style(Style::default().fg(tables_border_color))
+      .title("Tables")
+      .border_type(BorderType::Plain);
+
+    let table_list_chunks = if self.is_searching_tables {
+      Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
+        .split(table_chunks[0])
+    } else {
+      table_chunks.clone()
+    };
+
+    if self.is_searching_tables {
+      let search_block = Block::default().borders(Borders::ALL).title("Search");
+      let search_text =
+        Paragraph::new(Text::styled(format!("{}", self.table_search_query), Style::default().fg(Color::Yellow)))
+          .block(search_block);
+      f.render_widget(search_text, table_list_chunks[0]);
+    }
+
+    let table_render_chunk = if self.is_searching_tables { table_list_chunks[1] } else { table_list_chunks[0] };
+
+    let mut table_list_state = ListState::default();
+    table_list_state.select(Some(self.selected_table_index));
+    let items: Vec<ListItem> = self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect();
+
+    let list = List::new(items)
+      .block(tables)
+      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD));
+    f.render_stateful_widget(list, table_render_chunk, &mut table_list_state);
+
+    Ok(table_chunks)
+  }
+
+  fn render_query_input(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    let query_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
+      .split(chunks[1]);
+
+    let query_border_color = if self.selected_component == ComponentKind::Query { Color::Cyan } else { Color::White };
+    let border_style = Style::default().fg(query_border_color);
+    let input_block = Block::default().borders(Borders::ALL).border_style(border_style).title("Query");
+    let style = ratatui::style::Style::default().bg(query_border_color).add_modifier(Modifier::REVERSED);
+    self.query_input.set_block(input_block);
+
+    f.render_widget(self.query_input.widget(), query_chunks[0]);
+
+    Ok(query_chunks)
+  }
+
+  fn render_query_results(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    let table_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+      .split(chunks[1]);
+
+    let skip_count = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
+    let normal_style = Style::default();
+    let header_cells = self
+      .selected_headers
+      .iter()
+      .skip(skip_count)
+      .take(VISIBLE_COLUMNS)
+      .map(|h| Cell::from(h.to_string()).style(Style::default().fg(Color::Red).bg(Color::Green)));
+    let header = ratatui::widgets::Row::new(header_cells).style(normal_style).height(1);
+
+    let rows = self
+      .query_results
+      .iter()
+      .map(|r| {
+        let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| Cell::from(c.to_string()));
+        ratatui::widgets::Row::new(cells).height(1).bottom_margin(1)
+      })
+      .collect::<Vec<_>>();
+
+    let status_text = Paragraph::new(Text::styled(format!("Rows: {}", rows.len()), Style::default().fg(Color::Yellow)));
+    if !rows.is_empty() {
+      f.render_widget(status_text, table_chunks[1]);
+    }
+
+    let results_border_color =
+      if self.selected_component == ComponentKind::Results { Color::Cyan } else { Color::White };
+    let mut table_state = TableState::default();
+    table_state.select(Some(self.selected_row_index));
+    let result_table = Table::default()
+      .rows(rows)
+      .header(header)
+      .column_spacing(10)
+      .block(
+        Block::default().borders(Borders::ALL).title("Results").fg(results_border_color).border_type(BorderType::Plain),
+      )
+      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
+      .widths(&[Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+
+    f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
+
+    if self.show_row_details {
+      if let Some(json_str) = self.json() {
+        let popup = Popup::new("Row Details", json_str);
+        f.render_widget(popup.to_widget(), f.size());
+      }
+    }
+
+    Ok(chunks)
   }
 }
 
@@ -223,6 +341,7 @@ impl<'a> Component for Db<'a> {
         self.selected_headers = headers;
         self.query_results = results;
         self.horizonal_scroll_offset = 0;
+        self.selected_row_index = 0;
         self.selected_component = ComponentKind::Results;
         return Ok(Some(Action::SelectComponent(ComponentKind::Results)));
       },
@@ -263,96 +382,11 @@ impl<'a> Component for Db<'a> {
 
     f.render_widget(title, chunks[0]);
 
-    let table_chunks = Layout::default()
-      .direction(Direction::Horizontal)
-      .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
-      .split(chunks[1]);
+    let table_chunks = self.render_table_list(f, chunks)?;
 
-    let tables_border_color = if self.selected_component == ComponentKind::Home { Color::Cyan } else { Color::White };
-    let tables = Block::default()
-      .borders(Borders::ALL)
-      .style(Style::default().fg(tables_border_color))
-      .title("Tables")
-      .border_type(BorderType::Plain);
+    let query_chunks = self.render_query_input(f, table_chunks)?;
 
-    let table_list_chunks = if self.is_searching_tables {
-      Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)].as_ref())
-        .split(table_chunks[0])
-    } else {
-      table_chunks.clone()
-    };
-
-    if self.is_searching_tables {
-      let search_block = Block::default().borders(Borders::ALL).title("Search");
-      let search_text =
-        Paragraph::new(Text::styled(format!("{}", self.table_search_query), Style::default().fg(Color::Yellow)))
-          .block(search_block);
-      f.render_widget(search_text, table_list_chunks[0]);
-    }
-
-    let table_render_chunk = if self.is_searching_tables { table_list_chunks[1] } else { table_list_chunks[0] };
-
-    let mut table_list_state = ListState::default();
-    table_list_state.select(Some(self.selected_table_index));
-    let items: Vec<ListItem> = self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect();
-
-    let list = List::new(items)
-      .block(tables)
-      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD));
-    f.render_stateful_widget(list, table_render_chunk, &mut table_list_state);
-
-    let query_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
-      .split(table_chunks[1]);
-
-    let query_border_color = if self.selected_component == ComponentKind::Query { Color::Cyan } else { Color::White };
-    let border_style = Style::default().fg(query_border_color);
-    let input_block = Block::default().borders(Borders::ALL).border_style(border_style).title("Query");
-    let style = ratatui::style::Style::default().bg(query_border_color).add_modifier(Modifier::REVERSED);
-    self.query_input.set_block(input_block);
-
-    f.render_widget(self.query_input.widget(), query_chunks[0]);
-
-    let skip_count = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
-    let normal_style = Style::default();
-    let header_cells = self
-      .selected_headers
-      .iter()
-      .skip(skip_count)
-      .take(VISIBLE_COLUMNS)
-      .map(|h| Cell::from(h.to_string()).style(Style::default().fg(Color::Red).bg(Color::Green)));
-    let header = ratatui::widgets::Row::new(header_cells).style(normal_style).height(1);
-
-    let rows = self.query_results.iter().map(|r| {
-      let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| Cell::from(c.to_string()));
-      ratatui::widgets::Row::new(cells).height(1).bottom_margin(1)
-    });
-
-    let results_border_color =
-      if self.selected_component == ComponentKind::Results { Color::Cyan } else { Color::White };
-    let mut table_state = TableState::default();
-    table_state.select(Some(self.selected_row_index));
-    let result_table = Table::default()
-      .rows(rows)
-      .header(header)
-      .column_spacing(10)
-      .block(
-        Block::default().borders(Borders::ALL).title("Results").fg(results_border_color).border_type(BorderType::Plain),
-      )
-      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
-      .widths(&[Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
-
-    f.render_stateful_widget(result_table, query_chunks[1], &mut table_state);
-
-    if self.show_row_details {
-      if let Some(json_str) = self.json() {
-        let popup = Popup::new("Row Details", json_str);
-        f.render_widget(popup.to_widget(), f.size());
-      }
-    }
+    self.render_query_results(f, query_chunks)?;
 
     Ok(())
   }
