@@ -53,6 +53,8 @@ pub struct Db<'a> {
   show_row_details: bool,
   table_search_query: String,
   is_searching_tables: bool,
+  row_is_selected: bool,
+  detail_row_index: usize,
 }
 
 impl<'a> Db<'a> {
@@ -69,14 +71,28 @@ impl<'a> Db<'a> {
       return None;
     }
 
-    let row_data = self.query_results[self.selected_row_index].iter().zip(self.selected_headers.iter()).fold(
-      BTreeMap::new(),
-      |mut acc, (value, header)| {
-        acc.insert(header, value);
-        acc
-      },
-    );
-    let json_str = serde_json::to_string_pretty(&row_data).unwrap();
+    let json_str = if self.row_is_selected {
+      if let Some(selected_row) = self.query_results.get(self.selected_row_index) {
+        if let Some(selected_cell) = selected_row.get(self.detail_row_index) {
+          selected_cell.to_string()
+        } else {
+          String::new()
+        }
+      } else {
+        String::new()
+      }
+    } else {
+      let row_data = self.query_results[self.selected_row_index].iter().zip(self.selected_headers.iter()).fold(
+        BTreeMap::new(),
+        |mut acc, (value, header)| {
+          acc.insert(header, value);
+          acc
+        },
+      );
+
+      serde_json::to_string_pretty(&row_data).unwrap()
+    };
+
     Some(json_str)
   }
 
@@ -145,7 +161,65 @@ impl<'a> Db<'a> {
     Ok(query_chunks)
   }
 
+  fn render_query_result_details(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    let table_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+      .split(chunks[1]);
+
+    if let Some(selected_row) = self.query_results.get(self.selected_row_index) {
+      let normal_style = Style::default();
+      let header_cells = ["Name", "value"]
+        .iter()
+        .map(|h| Cell::from(h.to_string()).style(Style::default().fg(Color::Red).bg(Color::Green)));
+      let header = ratatui::widgets::Row::new(header_cells).style(normal_style).height(1);
+
+      let rows = selected_row
+        .iter()
+        .zip(self.selected_headers.iter())
+        .map(|(c, r)| {
+          let cells = [Cell::from(r.to_string()), Cell::from(c.to_string())];
+          ratatui::widgets::Row::new(cells).height(1).bottom_margin(1)
+        })
+        .collect::<Vec<_>>();
+
+      let status_text =
+        Paragraph::new(Text::styled(format!("Rows: {}", rows.len()), Style::default().fg(Color::Yellow)));
+      f.render_widget(status_text, table_chunks[1]);
+
+      let results_border_color =
+        if self.selected_component == ComponentKind::Results { Color::Cyan } else { Color::White };
+      let mut table_state = TableState::default();
+      table_state.select(Some(self.detail_row_index));
+      let result_table = Table::default()
+        .rows(rows)
+        .header(header)
+        .column_spacing(10)
+        .block(
+          Block::default()
+            .borders(Borders::ALL)
+            .title("Results")
+            .fg(results_border_color)
+            .border_type(BorderType::Plain),
+        )
+        .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
+        .widths(&[Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+
+      f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
+    }
+
+    Ok(chunks)
+  }
+
   fn render_query_results(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    if self.row_is_selected {
+      self.render_query_result_details(f, chunks)
+    } else {
+      self.render_query_results_table(f, chunks)
+    }
+  }
+
+  fn render_query_results_table(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
     let table_chunks = Layout::default()
       .direction(Direction::Vertical)
       .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
@@ -171,9 +245,7 @@ impl<'a> Db<'a> {
       .collect::<Vec<_>>();
 
     let status_text = Paragraph::new(Text::styled(format!("Rows: {}", rows.len()), Style::default().fg(Color::Yellow)));
-    if !rows.is_empty() {
-      f.render_widget(status_text, table_chunks[1]);
-    }
+    f.render_widget(status_text, table_chunks[1]);
 
     let results_border_color =
       if self.selected_component == ComponentKind::Results { Color::Cyan } else { Color::White };
@@ -274,6 +346,9 @@ impl<'a> Component for Db<'a> {
           KeyCode::Char('r') => {
             return Ok(Some(Action::HandleQuery(self.query_input.lines().join(" "))));
           },
+          KeyCode::Char(' ') => {
+            self.row_is_selected = !self.row_is_selected;
+          },
           _ => {},
         }
       },
@@ -317,20 +392,32 @@ impl<'a> Component for Db<'a> {
       },
       Action::RowMoveDown => {
         if !self.query_results.is_empty() {
-          if self.selected_component == ComponentKind::Results && self.selected_row_index < self.query_results.len() - 1
+          if self.selected_component == ComponentKind::Results
+            && !self.row_is_selected
+            && self.selected_row_index < self.query_results.len() - 1
           {
             self.selected_row_index += 1;
+          } else if self.selected_component == ComponentKind::Results
+            && self.row_is_selected
+            && self.detail_row_index < self.query_results[self.selected_row_index].len() - 1
+          {
+            self.detail_row_index += 1;
           }
         }
       },
       Action::RowMoveUp => {
-        if self.selected_component == ComponentKind::Results && self.selected_row_index > 0 {
+        if self.selected_component == ComponentKind::Results && self.selected_row_index > 0 && !self.row_is_selected {
           self.selected_row_index -= 1;
+        } else if self.selected_component == ComponentKind::Results && self.row_is_selected && self.detail_row_index > 0
+        {
+          self.detail_row_index -= 1;
         }
       },
       Action::LoadSelectedTable => {
         if let Some(selected_table) = self.tables.get(self.selected_table_index) {
           let query = format!("SELECT * FROM {}", selected_table.name);
+          self.query_input.select_all();
+          self.query_input.cut();
           self.query_input.insert_str(&query);
           return Ok(Some(Action::HandleQuery(query)));
         } else {
@@ -342,6 +429,7 @@ impl<'a> Component for Db<'a> {
         self.query_results = results;
         self.horizonal_scroll_offset = 0;
         self.selected_row_index = 0;
+        self.detail_row_index = 0;
         self.selected_component = ComponentKind::Results;
         return Ok(Some(Action::SelectComponent(ComponentKind::Results)));
       },
