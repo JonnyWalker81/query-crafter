@@ -195,7 +195,8 @@ impl App {
           Action::HandleQuery(ref q) => {
             // println!("Execute Query: {}", q);
             if let Err(e) = query(q, action_tx.clone(), self.pool.clone()).await {
-              println!("Error executing query: {:?}", e);
+              // println!("Error executing query: {:?}", e);
+              dispatch(action_tx.clone(), Action::Error(format!("Error executing query: {:?}", e))).await?;
             }
           },
           _ => {},

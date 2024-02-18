@@ -5,9 +5,7 @@ use std::{
   time::Duration,
 };
 
-use arboard::Clipboard;
-#[cfg(target_os = "linux")]
-use arboard::SetExtLinux;
+use clipboard::{ClipboardContext, ClipboardProvider};
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{prelude::*, widgets::*};
@@ -55,6 +53,7 @@ pub struct Db<'a> {
   is_searching_tables: bool,
   row_is_selected: bool,
   detail_row_index: usize,
+  error_message: Option<String>,
 }
 
 impl<'a> Db<'a> {
@@ -272,6 +271,15 @@ impl<'a> Db<'a> {
 
     Ok(chunks)
   }
+
+  fn render_error(&mut self, f: &mut Frame<'_>) -> Result<()> {
+    if let Some(error_message) = &self.error_message {
+      let popup = Popup::new("Error", error_message.to_string());
+      f.render_widget(popup.to_widget(), f.size());
+    }
+
+    Ok(())
+  }
 }
 
 impl<'a> Component for Db<'a> {
@@ -310,7 +318,11 @@ impl<'a> Component for Db<'a> {
           },
           KeyCode::Esc => {
             self.table_search_query.clear();
-            self.is_searching_tables = false;
+            if !self.is_searching_tables {
+              return Ok(Some(Action::LoadTables(String::new())));
+            } else {
+              self.is_searching_tables = false;
+            }
           },
           _ => {},
         }
@@ -334,13 +346,22 @@ impl<'a> Component for Db<'a> {
             return Ok(Some(Action::HandleQuery(self.query_input.lines().join(" "))));
           }
         }
+
+        match key.code {
+          KeyCode::Char('q') => {
+            if self.error_message.is_some() {
+              self.error_message = None;
+            }
+          },
+          _ => {},
+        }
       },
       ComponentKind::Results => {
         match key.code {
           KeyCode::Char('y') => {
             if let Some(json_str) = self.json() {
-              #[cfg(target_os = "linux")]
-              Clipboard::new()?.set().wait().text(json_str)?;
+              let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+              ctx.set_contents(json_str).unwrap();
             }
           },
           KeyCode::Char('r') => {
@@ -452,6 +473,9 @@ impl<'a> Component for Db<'a> {
       Action::RowDetails => {
         self.show_row_details = !self.show_row_details;
       },
+      Action::Error(e) => {
+        self.error_message = Some(e);
+      },
       _ => {},
     }
     Ok(None)
@@ -475,6 +499,8 @@ impl<'a> Component for Db<'a> {
     let query_chunks = self.render_query_input(f, table_chunks)?;
 
     self.render_query_results(f, query_chunks)?;
+
+    self.render_error(f)?;
 
     Ok(())
   }
