@@ -11,6 +11,7 @@ build = "build.rs"
 
 [dependencies]
 arboard = "3.3.0"
+async-trait = "0.1.77"
 better-panic = "0.3.0"
 chrono = "0.4.31"
 clap = { version = "4.4.5", features = ["derive", "cargo", "wrap_help", "unicode", "string", "unstable-styles"] }
@@ -27,13 +28,13 @@ lazy_static = "1.4.0"
 libc = "0.2.148"
 log = "0.4.20"
 pretty_assertions = "1.4.0"
-ratatui = { version = "0.25.0", features = ["serde", "macros"] }
+ratatui = { version = "0.26", features = ["serde", "macros"] }
 # ratatui-textarea = {git = "https://github.com/JonnyWalker81/ratatui-textarea.git"}
 rust_decimal = "1.33.1"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.107"
 signal-hook = "0.3.17"
-sqlx = {version = "0.7.3", features = ["runtime-tokio", "tls-rustls", "chrono", "json", "rust_decimal", "uuid", "postgres"] }
+sqlx = {version = "0.7.3", features = ["runtime-tokio", "tls-rustls", "chrono", "json", "rust_decimal", "uuid", "postgres", "sqlite"] }
 strip-ansi-escapes = "0.2.0"
 strum = { version = "0.25.0", features = ["derive"] }
 tokio = { version = "1.32.0", features = ["full", "time"] }
@@ -44,7 +45,7 @@ toml = "0.8.8"
 tracing = "0.1.37"
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "serde"] }
-tui-popup = "0.2.2"
+tui-popup = {git = "https://github.com/joshka/tui-popup"} # "0.2.2"
 tui-textarea = "0.4.0"
 
 [build-dependencies]

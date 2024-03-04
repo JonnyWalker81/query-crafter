@@ -11,11 +11,14 @@ pub struct Cli {
   pub tick_rate: f64,
 
   #[arg(
-    short,
+    short('r'),
     long,
     value_name = "FLOAT",
     help = "Frame rate, i.e. number of frames per second",
     default_value_t = 4.0
   )]
   pub frame_rate: f64,
+
+  #[arg(short, long, value_name = "FILE", help = "Sqlite database file to use")]
+  pub filename: Option<String>,
 }

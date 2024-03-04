@@ -201,6 +201,7 @@ impl<'a> Db<'a> {
             .fg(results_border_color)
             .border_type(BorderType::Plain),
         )
+        .highlight_symbol(">>")
         .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
         .widths(&[Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
 

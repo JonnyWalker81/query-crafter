@@ -1,9 +1,9 @@
 use std::{
+  sync::Arc,
   thread,
   time::{Duration, Instant},
 };
 
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use color_eyre::eyre::{self, anyhow, Result};
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
@@ -27,6 +27,7 @@ use crate::{
   },
   config::Config,
   mode::Mode,
+  sql::Queryer,
   tui,
 };
 
@@ -34,12 +35,14 @@ pub struct App {
   pub config: Config,
   pub tick_rate: f64,
   pub frame_rate: f64,
+  pub filename: Option<String>,
   pub components: Vec<Box<dyn Component>>,
   pub should_quit: bool,
   pub should_suspend: bool,
   pub mode: Mode,
   pub last_tick_key_events: Vec<KeyEvent>,
   pool: sqlx::Pool<sqlx::Postgres>,
+  db: Arc<dyn Queryer>,
 }
 
 fn to_connection(config: &str) -> Result<String> {
@@ -57,7 +60,7 @@ fn to_connection(config: &str) -> Result<String> {
 }
 
 impl App {
-  pub async fn new(tick_rate: f64, frame_rate: f64) -> Result<Self> {
+  pub async fn new(tick_rate: f64, frame_rate: f64, filename: Option<String>) -> Result<Self> {
     // let home = Home::new();
     // let fps = FpsCounter::default();
     let db = Db::new();
@@ -65,10 +68,16 @@ impl App {
     let mode = Mode::Home;
     let connection = to_connection("config.toml")?;
     let pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
+    let db_conn: Arc<dyn Queryer> = match &filename {
+      Some(f) => Arc::new(crate::sql::Sqlite::new(&f).await?),
+      None => Arc::new(crate::sql::Postgres::new(&connection).await?),
+    };
+    let postgres = crate::sql::Postgres::new(&connection).await?;
 
     Ok(Self {
       tick_rate,
       frame_rate,
+      filename,
       // components: vec![Box::new(home), Box::new(fps)],
       components: vec![Box::new(db)],
       should_quit: false,
@@ -77,6 +86,7 @@ impl App {
       mode,
       last_tick_key_events: Vec::new(),
       pool,
+      db: db_conn,
     })
   }
 
@@ -99,7 +109,7 @@ impl App {
       component.init(tui.size()?)?;
     }
 
-    init(action_tx.clone(), self.pool.clone())?;
+    init(action_tx.clone(), self.db.clone())?;
 
     loop {
       if let Some(e) = tui.next().await {
@@ -170,7 +180,7 @@ impl App {
           Action::LoadTable(ref table_name) => {
             // println!("Load Table: {}", table_name);
             let q = format!("SELECT * from {}", table_name);
-            query(&q, action_tx.clone(), self.pool.clone()).await?;
+            query(&q, action_tx.clone(), self.db.clone()).await?;
           },
           Action::LoadTables(ref search) => {
             // println!("Load Tables");
@@ -194,7 +204,7 @@ impl App {
           },
           Action::HandleQuery(ref q) => {
             // println!("Execute Query: {}", q);
-            if let Err(e) = query(q, action_tx.clone(), self.pool.clone()).await {
+            if let Err(e) = query(q, action_tx.clone(), self.db.clone()).await {
               // println!("Error executing query: {:?}", e);
               dispatch(action_tx.clone(), Action::Error(format!("Error executing query: {:?}", e))).await?;
             }
@@ -224,7 +234,7 @@ impl App {
   }
 }
 
-async fn dispatch(tx: tokio::sync::mpsc::UnboundedSender<Action>, action: Action) -> Result<()> {
+pub async fn dispatch(tx: tokio::sync::mpsc::UnboundedSender<Action>, action: Action) -> Result<()> {
   if let Err(e) = tx.send(action) {
     println!("Error dipatching: {:?}", e);
   }
@@ -255,110 +265,20 @@ async fn load_tables(
   Ok(())
 }
 
-fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, pool: sqlx::Pool<sqlx::Postgres>) -> Result<()> {
+// fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, pool: sqlx::Pool<sqlx::Postgres>) -> Result<()> {
+fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Queryer>) -> Result<()> {
   tokio::spawn(async move {
-    let pool = pool.clone();
+    // let pool = pool.clone();
     thread::sleep(Duration::from_millis(200));
 
-    if let Err(e) = load_tables(&pool, tx, "").await {
+    if let Err(e) = db.load_tables(tx, "").await {
       println!("Error sending load table event.");
     }
   });
   Ok(())
 }
 
-async fn query(
-  q: &str,
-  tx: tokio::sync::mpsc::UnboundedSender<Action>,
-  pool: sqlx::Pool<sqlx::Postgres>,
-) -> Result<()> {
-  let mut rows = sqlx::query(q).fetch(&pool);
-
-  let mut headers = vec![];
-  let mut results = vec![];
-  while let Some(row) = rows.try_next().await? {
-    if headers.len() == 0 {
-      headers = row.columns().iter().map(|c| c.name().to_string()).collect();
-    }
-    let mut row_result = vec![];
-    for c in row.columns() {
-      if let Ok(v) = get_value(&row, c) {
-        row_result.push(v);
-      }
-    }
-
-    results.push(row_result);
-  }
-
-  dispatch(tx, Action::QueryResult(headers, results)).await?;
+async fn query(q: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Queryer>) -> Result<()> {
+  db.query(q, tx).await?;
   Ok(())
-}
-
-#[macro_export]
-macro_rules! get_or_null {
-  ($value:expr) => {
-    $value.map_or("NULL".to_string(), |v| v.to_string())
-  };
-}
-
-fn get_value(row: &PgRow, column: &PgColumn) -> Result<String> {
-  let column_name = column.name();
-  if let Ok(value) = row.try_get(column_name) {
-    let value: Option<i16> = value;
-    let v = value.map_or("NULL".to_string(), |v| v.to_string());
-    Ok(v)
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<i32> = value;
-    let v = value.map_or("NULL".to_string(), |v| v.to_string());
-    Ok(v)
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<i64> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<rust_decimal::Decimal> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: String = value;
-    Ok(value)
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<NaiveDate> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: String = value;
-    Ok(value)
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<chrono::DateTime<chrono::Utc>> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<chrono::DateTime<chrono::Local>> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<NaiveDateTime> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<NaiveDate> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<NaiveTime> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<serde_json::Value> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get::<Option<bool>, _>(column_name) {
-    let value: Option<bool> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<Vec<String>> = value;
-    Ok(value.map_or("NULL".to_string(), |v| v.join(",")))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<Uuid> = value;
-    Ok(get_or_null!(value))
-  } else if let Ok(value) = row.try_get(column_name) {
-    let value: Option<&[u8]> = value;
-    Ok(value.map_or("NULL".to_string(), |values| {
-      format!("\\x{}", values.iter().map(|v| format!("{:02x}", v)).collect::<String>())
-    }))
-  } else {
-    eyre::bail!("Unknown type for column {}", column_name);
-  }
 }
