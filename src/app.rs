@@ -45,8 +45,10 @@ pub struct App {
   db: Arc<dyn Queryer>,
 }
 
+static CONFIG: &'static [u8] = include_bytes!("../config.toml");
+
 fn to_connection(config: &str) -> Result<String> {
-  let app_config_contents = std::fs::read_to_string("config.toml")?;
+  let app_config_contents = std::str::from_utf8(CONFIG)?;
   let app_config = toml::from_str::<Value>(&app_config_contents)?;
   let v = app_config["connections"][0]["host"].clone();
   let host = app_config["connections"][0]["host"].as_str().map_or("localhost", |v| v);
