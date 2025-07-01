@@ -1,0 +1,33 @@
+{
+  "keybindings": {
+    "Home": {
+      "<k>": "TableMoveUp",
+      "<j>": "TableMoveDown",
+      "<up>": "TableMoveUp",
+      "<down>": "TableMoveDown",
+      "<enter>": "LoadSelectedTable",
+      "<tab>": "FocusQuery",
+      "<Ctrl-q>": "Quit", // Quit the application
+      "<Ctrl-d>": "Quit", // Another way to quit
+      "<Ctrl-c>": "Quit", // Yet another way to quit
+      "<Ctrl-z>": "Suspend" // Suspend the application
+    },
+    "Query": {
+      "<Ctrl-y>": "ExecuteQuery", // Primary execute key
+      "<Ctrl-enter>": "ExecuteQuery",
+      "<F5>": "ExecuteQuery", // Alternative key for execute
+      "<Ctrl-e>": "ExecuteQuery", // Another alternative
+      "<Ctrl-q>": "Quit", // Quit the application
+      "<tab>": "FocusResults",
+    },
+    "Results": {
+      "<k>": "RowMoveUp",
+      "<j>": "RowMoveDown",
+      "<h>": "ScrollTableLeft",
+      "<l>": "ScrollTableRight",
+      "<enter>": "RowDetails",
+      "<Ctrl-q>": "Quit", // Quit the application
+      "<tab>": "FocusHome",
+    }
+  }
+}

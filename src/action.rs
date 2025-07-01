@@ -37,4 +37,5 @@ pub enum Action {
   ExecuteQuery,
   HandleQuery(String),
   RowDetails,
+  SwitchEditor,
 }

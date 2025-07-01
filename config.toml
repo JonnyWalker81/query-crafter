@@ -1,0 +1,20 @@
+[[connections]]
+host = "localhost"
+port = 5432
+username = "postgres"
+password = "secret5"
+database = "postgres"
+
+[[connections]]
+host = "localhost"
+port = 64333
+username = "join_root"
+password = "faceBegunIllFarmer"
+database = "komodo"
+
+[[connections]]
+host = "localhost"
+port = 64333
+username = "postgres"
+password = "secret5"
+database = "postgres"

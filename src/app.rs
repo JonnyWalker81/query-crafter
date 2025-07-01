@@ -1,4 +1,5 @@
 use std::{
+  any::Any,
   sync::Arc,
   thread,
   time::{Duration, Instant},
@@ -20,12 +21,15 @@ use toml::Value;
 use crate::{
   action::Action,
   components::{
+    custom_vim_editor::CustomVimEditor,
     db::{Db, DbTable},
     fps::FpsCounter,
     home::Home,
+    vim::Vim,
     Component, ComponentKind,
   },
   config::Config,
+  editor_component::EditorComponent,
   mode::Mode,
   sql::Queryer,
   tui,
@@ -41,22 +45,24 @@ pub struct App {
   pub should_suspend: bool,
   pub mode: Mode,
   pub last_tick_key_events: Vec<KeyEvent>,
-  pool: sqlx::Pool<sqlx::Postgres>,
+  pool: Option<sqlx::Pool<sqlx::Postgres>>,
   db: Arc<dyn Queryer>,
+  pub editor: Box<dyn EditorComponent>,
 }
 
-static CONFIG: &'static [u8] = include_bytes!("../config.toml");
+static CONFIG: &[u8] = include_bytes!("../config.toml");
 
 fn to_connection(config: &str) -> Result<String> {
   let app_config_contents = std::str::from_utf8(CONFIG)?;
-  let app_config = toml::from_str::<Value>(&app_config_contents)?;
+  let app_config = toml::from_str::<Value>(app_config_contents)?;
   let v = app_config["connections"][0]["host"].clone();
   let host = app_config["connections"][0]["host"].as_str().map_or("localhost", |v| v);
-  let _port = app_config["connections"][0]["port"].as_integer().unwrap_or(5432);
+  let port = app_config["connections"][0]["port"].as_integer().unwrap_or(5432);
   let username = app_config["connections"][0]["username"].as_str().map_or("postgres", |v| v);
   let password = app_config["connections"][0]["password"].as_str().map_or("", |v| v);
   let database = app_config["connections"][0]["database"].as_str().map_or("postgres", |v| v);
-  let connection = format!("postgres://{}:{}@{}/{}", username, password, host, database);
+  let connection = format!("postgresql://{username}:{password}@{host}:{port}/{database}?sslmode=disable");
+  println!("Connection: {connection}");
 
   Ok(connection)
 }
@@ -68,13 +74,19 @@ impl App {
     let db = Db::new();
     let config = Config::new()?;
     let mode = Mode::Home;
-    let connection = to_connection("config.toml")?;
-    let pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
-    let db_conn: Arc<dyn Queryer> = match &filename {
-      Some(f) => Arc::new(crate::sql::Sqlite::new(&f).await?),
-      None => Arc::new(crate::sql::Postgres::new(&connection).await?),
+    let (db_conn, pool) = match &filename {
+      Some(f) => {
+        let sqlite_conn = Arc::new(crate::sql::Sqlite::new(f).await?);
+        (sqlite_conn as Arc<dyn Queryer>, None)
+      },
+      None => {
+        let connection = to_connection("config.toml")?;
+        let pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
+        let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
+        (pg_conn as Arc<dyn Queryer>, Some(pool))
+      },
     };
-    let postgres = crate::sql::Postgres::new(&connection).await?;
+    // let postgres = crate::sql::Postgres::new(&connection).await?;
 
     Ok(Self {
       tick_rate,
@@ -89,6 +101,7 @@ impl App {
       last_tick_key_events: Vec::new(),
       pool,
       db: db_conn,
+      editor: Box::new(Vim::new(crate::editor_common::Mode::Normal)),
     })
   }
 
@@ -108,10 +121,11 @@ impl App {
     }
 
     for component in self.components.iter_mut() {
-      component.init(tui.size()?)?;
+      component.init(Rect::default())?;
     }
+    self.editor.init(Rect::default())?;
 
-    init(action_tx.clone(), self.db.clone())?;
+    init(action_tx.clone(), self.db.clone()).await?;
 
     loop {
       if let Some(e) = tui.next().await {
@@ -137,6 +151,10 @@ impl App {
                 }
               }
             };
+
+            if let Some(action) = self.editor.on_key_event(key)? {
+              action_tx.send(action)?;
+            }
           },
           _ => {},
         }
@@ -162,9 +180,9 @@ impl App {
             tui.resize(Rect::new(0, 0, w, h))?;
             tui.draw(|f| {
               for component in self.components.iter_mut() {
-                let r = component.draw(f, f.size());
+                let r = component.draw(f, f.area());
                 if let Err(e) = r {
-                  action_tx.send(Action::Error(format!("Failed to draw: {:?}", e))).unwrap();
+                  action_tx.send(Action::Error(format!("Failed to draw: {e:?}"))).unwrap();
                 }
               }
             })?;
@@ -172,44 +190,48 @@ impl App {
           Action::Render => {
             tui.draw(|f| {
               for component in self.components.iter_mut() {
-                let r = component.draw(f, f.size());
+                let r = component.draw(f, f.area());
                 if let Err(e) = r {
-                  action_tx.send(Action::Error(format!("Failed to draw: {:?}", e))).unwrap();
+                  action_tx.send(Action::Error(format!("Failed to draw: {e:?}"))).unwrap();
                 }
               }
             })?;
           },
           Action::LoadTable(ref table_name) => {
             // println!("Load Table: {}", table_name);
-            let q = format!("SELECT * from {}", table_name);
+            let q = format!("SELECT * from {table_name}");
             query(&q, action_tx.clone(), self.db.clone()).await?;
           },
           Action::LoadTables(ref search) => {
             // println!("Load Tables");
-            load_tables(&self.pool, action_tx.clone(), search).await?;
+            self.db.load_tables(action_tx.clone(), search).await?;
           },
           Action::SelectComponent(ref kind) => {
             match kind {
               ComponentKind::Home => {
-                // println!("home mode");
                 self.mode = Mode::Home;
               },
               ComponentKind::Query => {
-                // println!("query mode");
                 self.mode = Mode::Query;
               },
               ComponentKind::Results => {
-                // println!("resuts mode");
                 self.mode = Mode::Results;
               },
             }
           },
           Action::HandleQuery(ref q) => {
-            // println!("Execute Query: {}", q);
             if let Err(e) = query(q, action_tx.clone(), self.db.clone()).await {
-              // println!("Error executing query: {:?}", e);
-              dispatch(action_tx.clone(), Action::Error(format!("Error executing query: {:?}", e))).await?;
+              dispatch(action_tx.clone(), Action::Error(format!("Error executing query: {e:?}"))).await?;
             }
+          },
+          Action::SwitchEditor => {
+            let current_text = self.editor.get_text();
+            if self.editor.as_any().is::<Vim>() {
+              self.editor = Box::new(CustomVimEditor::default());
+            } else {
+              self.editor = Box::new(Vim::new(crate::editor_common::Mode::Normal));
+            }
+            self.editor.set_text(&current_text);
           },
           _ => {},
         }
@@ -238,45 +260,16 @@ impl App {
 
 pub async fn dispatch(tx: tokio::sync::mpsc::UnboundedSender<Action>, action: Action) -> Result<()> {
   if let Err(e) = tx.send(action) {
-    println!("Error dipatching: {:?}", e);
+    println!("Error dipatching: {e:?}");
   }
 
   Ok(())
 }
 
-async fn load_tables(
-  pool: &sqlx::Pool<sqlx::Postgres>,
-  tx: tokio::sync::mpsc::UnboundedSender<Action>,
-  search: &str,
-) -> Result<()> {
-  let mut rows =
-    sqlx::query("SELECT * FROM information_schema.tables WHERE table_catalog = $1").bind("postgres").fetch(pool);
-
-  let mut tables = Vec::new();
-  while let Ok(Some(row)) = rows.try_next().await {
-    let name: String = row.try_get("table_name").unwrap_or_default();
-    let schema: String = row.try_get("table_schema").unwrap_or_default();
-    tables.push(DbTable { name, schema });
+async fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Queryer>) -> Result<()> {
+  if let Err(e) = db.load_tables(tx, "").await {
+    eprintln!("Error loading tables: {e:?}");
   }
-
-  tables.sort_by(|a, b| a.name.cmp(&b.name));
-  let t = if search.is_empty() { tables } else { tables.iter().filter(|t| t.name.contains(search)).cloned().collect() };
-
-  dispatch(tx, Action::TablesLoaded(t)).await?;
-
-  Ok(())
-}
-
-// fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, pool: sqlx::Pool<sqlx::Postgres>) -> Result<()> {
-fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Queryer>) -> Result<()> {
-  tokio::spawn(async move {
-    // let pool = pool.clone();
-    thread::sleep(Duration::from_millis(200));
-
-    if let Err(e) = db.load_tables(tx, "").await {
-      println!("Error sending load table event.");
-    }
-  });
   Ok(())
 }
 

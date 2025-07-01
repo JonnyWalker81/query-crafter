@@ -7,6 +7,8 @@ pub mod app;
 pub mod cli;
 pub mod components;
 pub mod config;
+pub mod editor_common;
+pub mod editor_component;
 pub mod mode;
 pub mod sql;
 pub mod tui;

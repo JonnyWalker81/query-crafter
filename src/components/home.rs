@@ -36,11 +36,23 @@ impl Component for Home {
   }
 
   fn update(&mut self, action: Action) -> Result<Option<Action>> {
-    match action {
-      Action::Tick => {
-      },
-      _ => {},
+    let _ = action == Action::Tick;
+    Ok(None)
+  }
+
+  fn init(&mut self, _area: ratatui::layout::Rect) -> Result<()> {
+    Ok(())
+  }
+
+  fn handle_events(&mut self, event: Option<crate::tui::Event>) -> Result<Option<Action>> {
+    if let Some(crate::tui::Event::Key(key)) = event {
+      self.handle_key_events(key)
+    } else {
+      Ok(None)
     }
+  }
+
+  fn handle_key_events(&mut self, _key: KeyEvent) -> Result<Option<Action>> {
     Ok(None)
   }
 
@@ -49,4 +61,3 @@ impl Component for Home {
     Ok(())
   }
 }
-

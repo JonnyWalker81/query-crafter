@@ -61,6 +61,30 @@ impl FpsCounter {
 }
 
 impl Component for FpsCounter {
+  fn register_action_handler(&mut self, _tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    Ok(())
+  }
+
+  fn register_config_handler(&mut self, _config: crate::config::Config) -> Result<()> {
+    Ok(())
+  }
+
+  fn init(&mut self, _area: ratatui::layout::Rect) -> Result<()> {
+    Ok(())
+  }
+
+  fn handle_events(&mut self, event: Option<crate::tui::Event>) -> Result<Option<Action>> {
+    if let Some(crate::tui::Event::Key(key)) = event {
+      self.handle_key_events(key)
+    } else {
+      Ok(None)
+    }
+  }
+
+  fn handle_key_events(&mut self, _key: crossterm::event::KeyEvent) -> Result<Option<Action>> {
+    Ok(None)
+  }
+
   fn update(&mut self, action: Action) -> Result<Option<Action>> {
     if let Action::Tick = action {
       self.app_tick()?
