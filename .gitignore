@@ -1,6 +1,5 @@
 /target
 .data/*.log
 /.direnv/
-/.envrc
 /butler.db
 /test.db
