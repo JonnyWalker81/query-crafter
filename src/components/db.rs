@@ -307,7 +307,6 @@ impl Db {
     // Initialize editor backend based on config
     if let Some(ref config) = config {
       let backend = &config.editor.backend;
-      eprintln!("Editor backend: {backend}");
       instance.editor_backend = EditorBackend::new_from_config(backend);
       instance.config = config.clone();
     }

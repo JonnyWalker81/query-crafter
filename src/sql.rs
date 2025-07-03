@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use color_eyre::eyre::{self, Result};
-use futures::StreamExt;
 use sqlx::{
   postgres::{PgColumn, PgPoolOptions, PgRow},
   sqlite::{SqliteColumn, SqliteRow},
