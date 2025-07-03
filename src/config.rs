@@ -10,9 +10,12 @@ use crate::{action::Action, mode::Mode};
 
 // Load config at runtime to prevent constant rebuilds
 fn load_default_config() -> Result<String> {
+    use color_eyre::eyre::Context;
+    
     let config_path = PathBuf::from(".config/config.json5");
     if config_path.exists() {
         std::fs::read_to_string(&config_path)
+            .context("Failed to read config.json5")
     } else {
         // Return default config if file doesn't exist
         Ok(String::from(r#"{
