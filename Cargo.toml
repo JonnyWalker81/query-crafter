@@ -1,5 +1,5 @@
 [workspace]
-members = ["."]
+members = [".", "query-crafter-theme"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -61,6 +61,7 @@ tui-textarea = "0.6.1"
 ropey = "1.6.0"
 nucleo = "0.5"
 once_cell = "1.19"
+query-crafter-theme = { path = "query-crafter-theme" }
 
 # AWS SDK dependencies
 aws-config = "1.1"

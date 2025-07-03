@@ -1,121 +1,121 @@
 use ratatui::style::{Color, Modifier, Style};
 
 /// Modern One Dark Pro theme inspired by popular Rust TUI applications
-/// This now delegates to theme_const for better compilation performance
+/// This now delegates to an external crate for zero rebuild impact
 pub struct Theme;
 
 impl Theme {
-  // Re-export color constants from theme_const
-  pub const ACCENT_BLUE: Color = crate::theme_const::ACCENT_BLUE;
-  pub const ACCENT_CYAN: Color = crate::theme_const::ACCENT_CYAN;
-  pub const ACCENT_GREEN: Color = crate::theme_const::ACCENT_GREEN;
-  pub const ACCENT_ORANGE: Color = crate::theme_const::ACCENT_ORANGE;
-  pub const ACCENT_PURPLE: Color = crate::theme_const::ACCENT_PURPLE;
-  pub const ACCENT_RED: Color = crate::theme_const::ACCENT_RED;
-  pub const BG_CURSOR: Color = crate::theme_const::BG_CURSOR;
-  pub const BG_PRIMARY: Color = crate::theme_const::BG_PRIMARY;
-  pub const BG_SECONDARY: Color = crate::theme_const::BG_SECONDARY;
-  pub const BG_SELECTION: Color = crate::theme_const::BG_SELECTION;
-  pub const BG_TERTIARY: Color = crate::theme_const::BG_TERTIARY;
-  pub const BORDER_FOCUSED: Color = crate::theme_const::BORDER_FOCUSED;
-  pub const BORDER_MUTED: Color = crate::theme_const::BORDER_MUTED;
-  pub const BORDER_NORMAL: Color = crate::theme_const::BORDER_NORMAL;
-  pub const ERROR: Color = crate::theme_const::ERROR;
-  pub const FG_PRIMARY: Color = crate::theme_const::FG_PRIMARY;
-  pub const FG_SECONDARY: Color = crate::theme_const::FG_SECONDARY;
-  pub const FG_TERTIARY: Color = crate::theme_const::FG_TERTIARY;
-  pub const INFO: Color = crate::theme_const::INFO;
-  pub const SUCCESS: Color = crate::theme_const::SUCCESS;
-  pub const WARNING: Color = crate::theme_const::WARNING;
+  // Re-export color constants from external theme crate
+  pub const ACCENT_BLUE: Color = query_crafter_theme::ACCENT_BLUE;
+  pub const ACCENT_CYAN: Color = query_crafter_theme::ACCENT_CYAN;
+  pub const ACCENT_GREEN: Color = query_crafter_theme::ACCENT_GREEN;
+  pub const ACCENT_ORANGE: Color = query_crafter_theme::ACCENT_ORANGE;
+  pub const ACCENT_PURPLE: Color = query_crafter_theme::ACCENT_PURPLE;
+  pub const ACCENT_RED: Color = query_crafter_theme::ACCENT_RED;
+  pub const BG_CURSOR: Color = query_crafter_theme::BG_CURSOR;
+  pub const BG_PRIMARY: Color = query_crafter_theme::BG_PRIMARY;
+  pub const BG_SECONDARY: Color = query_crafter_theme::BG_SECONDARY;
+  pub const BG_SELECTION: Color = query_crafter_theme::BG_SELECTION;
+  pub const BG_TERTIARY: Color = query_crafter_theme::BG_TERTIARY;
+  pub const BORDER_FOCUSED: Color = query_crafter_theme::BORDER_FOCUSED;
+  pub const BORDER_MUTED: Color = query_crafter_theme::BORDER_MUTED;
+  pub const BORDER_NORMAL: Color = query_crafter_theme::BORDER_NORMAL;
+  pub const ERROR: Color = query_crafter_theme::ERROR;
+  pub const FG_PRIMARY: Color = query_crafter_theme::FG_PRIMARY;
+  pub const FG_SECONDARY: Color = query_crafter_theme::FG_SECONDARY;
+  pub const FG_TERTIARY: Color = query_crafter_theme::FG_TERTIARY;
+  pub const INFO: Color = query_crafter_theme::INFO;
+  pub const SUCCESS: Color = query_crafter_theme::SUCCESS;
+  pub const WARNING: Color = query_crafter_theme::WARNING;
 
   // Delegate all style methods to theme_const
   #[inline(always)]
-  pub fn bg_primary() -> Style { crate::theme_const::bg_primary() }
+  pub fn bg_primary() -> Style { query_crafter_theme::bg_primary() }
 
   #[inline(always)]
-  pub fn bg_secondary() -> Style { crate::theme_const::bg_secondary() }
+  pub fn bg_secondary() -> Style { query_crafter_theme::bg_secondary() }
 
   #[inline(always)]
-  pub fn input() -> Style { crate::theme_const::input() }
+  pub fn input() -> Style { query_crafter_theme::input() }
 
   #[inline(always)]
-  pub fn selection() -> Style { crate::theme_const::selection() }
+  pub fn selection() -> Style { query_crafter_theme::selection() }
 
   #[inline(always)]
-  pub fn selection_active() -> Style { crate::theme_const::selection_active() }
+  pub fn selection_active() -> Style { query_crafter_theme::selection_active() }
 
   #[inline(always)]
-  pub fn border_normal() -> Style { crate::theme_const::border_normal() }
+  pub fn border_normal() -> Style { query_crafter_theme::border_normal() }
 
   #[inline(always)]
-  pub fn border_focused() -> Style { crate::theme_const::border_focused() }
+  pub fn border_focused() -> Style { query_crafter_theme::border_focused() }
 
   #[inline(always)]
-  pub fn header() -> Style { crate::theme_const::header() }
+  pub fn header() -> Style { query_crafter_theme::header() }
 
   #[inline(always)]
-  pub fn title() -> Style { crate::theme_const::title() }
+  pub fn title() -> Style { query_crafter_theme::title() }
 
   #[inline(always)]
-  pub fn success() -> Style { crate::theme_const::success() }
+  pub fn success() -> Style { query_crafter_theme::success() }
 
   #[inline(always)]
-  pub fn warning() -> Style { crate::theme_const::warning() }
+  pub fn warning() -> Style { query_crafter_theme::warning() }
 
   #[inline(always)]
-  pub fn error() -> Style { crate::theme_const::error() }
+  pub fn error() -> Style { query_crafter_theme::error() }
 
   #[inline(always)]
-  pub fn info() -> Style { crate::theme_const::info() }
+  pub fn info() -> Style { query_crafter_theme::info() }
 
   #[inline(always)]
-  pub fn muted() -> Style { crate::theme_const::muted() }
+  pub fn muted() -> Style { query_crafter_theme::muted() }
 
   #[inline(always)]
-  pub fn line_numbers() -> Style { crate::theme_const::line_numbers() }
+  pub fn line_numbers() -> Style { query_crafter_theme::line_numbers() }
 
   #[inline(always)]
-  pub fn tab_normal() -> Style { crate::theme_const::tab_normal() }
+  pub fn tab_normal() -> Style { query_crafter_theme::tab_normal() }
 
   #[inline(always)]
-  pub fn tab_selected() -> Style { crate::theme_const::tab_selected() }
+  pub fn tab_selected() -> Style { query_crafter_theme::tab_selected() }
 
   #[inline(always)]
-  pub fn status_bar() -> Style { crate::theme_const::status_bar() }
+  pub fn status_bar() -> Style { query_crafter_theme::status_bar() }
 
   #[inline(always)]
-  pub fn cursor_normal() -> Style { crate::theme_const::cursor_normal() }
+  pub fn cursor_normal() -> Style { query_crafter_theme::cursor_normal() }
 
   #[inline(always)]
-  pub fn cursor_insert() -> Style { crate::theme_const::cursor_insert() }
+  pub fn cursor_insert() -> Style { query_crafter_theme::cursor_insert() }
 
   #[inline(always)]
-  pub fn cursor_visual() -> Style { crate::theme_const::cursor_visual() }
+  pub fn cursor_visual() -> Style { query_crafter_theme::cursor_visual() }
 
   #[inline(always)]
-  pub fn sql_keyword() -> Style { crate::theme_const::sql_keyword() }
+  pub fn sql_keyword() -> Style { query_crafter_theme::sql_keyword() }
 
   #[inline(always)]
-  pub fn sql_function() -> Style { crate::theme_const::sql_function() }
+  pub fn sql_function() -> Style { query_crafter_theme::sql_function() }
 
   #[inline(always)]
-  pub fn sql_string() -> Style { crate::theme_const::sql_string() }
+  pub fn sql_string() -> Style { query_crafter_theme::sql_string() }
 
   #[inline(always)]
-  pub fn sql_number() -> Style { crate::theme_const::sql_number() }
+  pub fn sql_number() -> Style { query_crafter_theme::sql_number() }
 
   #[inline(always)]
-  pub fn sql_comment() -> Style { crate::theme_const::sql_comment() }
+  pub fn sql_comment() -> Style { query_crafter_theme::sql_comment() }
 
   #[inline(always)]
-  pub fn sql_operator() -> Style { crate::theme_const::sql_operator() }
+  pub fn sql_operator() -> Style { query_crafter_theme::sql_operator() }
 }
 
 /// Modern color palette - delegates to theme_const
 pub struct Colors;
 
 impl Colors {
-  pub const DANGER: Color = crate::theme_const::ERROR;
+  pub const DANGER: Color = query_crafter_theme::ERROR;
   pub const GRAY_100: Color = Color::Rgb(248, 249, 250);
   pub const GRAY_200: Color = Color::Rgb(233, 236, 239);
   pub const GRAY_300: Color = Color::Rgb(206, 212, 218);
@@ -141,7 +141,7 @@ pub mod style {
   #[inline(always)]
   pub fn button(active: bool) -> Style {
     if active {
-      crate::theme_const::selection_active()
+      query_crafter_theme::selection_active()
     } else {
       Style::default().bg(Theme::BG_SECONDARY).fg(Theme::FG_PRIMARY).add_modifier(Modifier::BOLD)
     }
@@ -150,7 +150,7 @@ pub mod style {
   #[inline(always)]
   pub fn list_item(selected: bool) -> Style {
     if selected {
-      crate::theme_const::selection_active()
+      query_crafter_theme::selection_active()
     } else {
       Style::default().fg(Theme::FG_PRIMARY)
     }
@@ -159,7 +159,7 @@ pub mod style {
   #[inline(always)]
   pub fn table_row(selected: bool) -> Style {
     if selected {
-      crate::theme_const::selection()
+      query_crafter_theme::selection()
     } else {
       Style::default().fg(Theme::FG_PRIMARY)
     }
@@ -168,9 +168,9 @@ pub mod style {
   #[inline(always)]
   pub fn border(focused: bool) -> Style {
     if focused {
-      crate::theme_const::border_focused()
+      query_crafter_theme::border_focused()
     } else {
-      crate::theme_const::border_normal()
+      query_crafter_theme::border_normal()
     }
   }
 }

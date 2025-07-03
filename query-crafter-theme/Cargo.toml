@@ -1,0 +1,8 @@
+[package]
+name = "query-crafter-theme"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.28"
+once_cell = "1.19"
