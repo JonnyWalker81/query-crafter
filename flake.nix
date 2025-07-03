@@ -32,7 +32,7 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
+          nativeBuildInputs = with pkgs; [
             # Rust toolchain
             rustToolchain
             cargo-watch
@@ -41,13 +41,21 @@
             cargo-audit
             cargo-nextest
 
-            # Build dependencies
+            # Build tools
             pkg-config
+            clang
+          ];
+
+          buildInputs = with pkgs; [
+            # OpenSSL
             openssl
+            openssl.dev
 
             # X11 dependencies (for clipboard support)
             xorg.libxcb
+            xorg.libxcb.dev
             xorg.libX11
+            xorg.libX11.dev
             xorg.libXcursor
             xorg.libXrandr
             xorg.libXi
@@ -93,6 +101,15 @@
           RUST_LOG = "query_crafter=debug";
 
           # Library paths for linking
+          LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            pkgs.xorg.libxcb
+            pkgs.xorg.libX11
+            pkgs.xorg.libXcursor
+            pkgs.xorg.libXrandr
+            pkgs.xorg.libXi
+            pkgs.openssl
+          ];
+          
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.xorg.libxcb
             pkgs.xorg.libX11

@@ -97,7 +97,10 @@ impl Theme {
 
   /// Header styling for tables
   pub fn header() -> Style {
-    Style::default().bg(Self::BG_SECONDARY).fg(Self::ACCENT_PURPLE).add_modifier(Modifier::BOLD)
+    Style::default()
+      .bg(Self::BG_SELECTION)
+      .fg(Self::ACCENT_CYAN)
+      .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
   }
 
   /// Title styling

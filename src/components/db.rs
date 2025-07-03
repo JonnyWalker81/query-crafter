@@ -213,6 +213,11 @@ pub struct Db {
   show_help: bool,
 }
 
+/// Creates a header cell with special styling and centering
+fn create_header_cell(text: &str, row_height: u16) -> Cell<'_> {
+  create_centered_cell(text, row_height)
+}
+
 /// Creates a `Cell` with text that is vertically centered.
 ///
 /// # Arguments
@@ -243,8 +248,9 @@ fn create_centered_cell(text: &str, row_height: u16) -> Cell<'_> {
     centered_lines.push("".to_string());
   }
 
-  // Add the actual text lines
+  // Add the actual text lines with horizontal centering
   for line in text_lines {
+    // For horizontal centering in table cells, we'll use the alignment feature
     centered_lines.push(line.to_string());
   }
 
@@ -661,9 +667,12 @@ impl Db {
       .iter()
       .skip(skip_count)
       .take(VISIBLE_COLUMNS)
-      .map(|h| create_centered_cell(h, HEADER_HEIGHT).style(crate::theme::Theme::header()))
+      .map(|h| create_header_cell(h, HEADER_HEIGHT))
       .collect();
-    let header = ratatui::widgets::Row::new(header_cells).height(HEADER_HEIGHT);
+    let header = ratatui::widgets::Row::new(header_cells)
+      .height(HEADER_HEIGHT)
+      .style(crate::theme::Theme::header())
+      .bottom_margin(1);
 
     // Use filtered results if available
     let rows = if self.filtered_results.is_empty() {
@@ -744,7 +753,11 @@ impl Db {
       .style(crate::theme::Theme::bg_primary())
       .highlight_symbol("\n▶ ")
       .highlight_style(crate::theme::Theme::selection_active())
-      .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+      .widths(
+        (0..VISIBLE_COLUMNS)
+          .map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16))
+          .collect::<Vec<_>>()
+      );
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
 
@@ -833,9 +846,12 @@ impl Db {
       .iter()
       .skip(skip_count)
       .take(VISIBLE_COLUMNS)
-      .map(|h| create_centered_cell(h, HEADER_HEIGHT).style(crate::theme::Theme::header()))
+      .map(|h| create_header_cell(h, HEADER_HEIGHT))
       .collect();
-    let header = ratatui::widgets::Row::new(header_cells).height(HEADER_HEIGHT);
+    let header = ratatui::widgets::Row::new(header_cells)
+      .height(HEADER_HEIGHT)
+      .style(crate::theme::Theme::header())
+      .bottom_margin(1);
 
     // Use filtered results if available
     let rows = if self.filtered_results.is_empty() {
@@ -916,7 +932,11 @@ impl Db {
       .style(crate::theme::Theme::bg_primary())
       .highlight_symbol("\n▶ ")
       .highlight_style(crate::theme::Theme::selection_active())
-      .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+      .widths(
+        (0..VISIBLE_COLUMNS)
+          .map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16))
+          .collect::<Vec<_>>()
+      );
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
 
@@ -993,9 +1013,12 @@ impl Db {
       .iter()
       .skip(skip_count)
       .take(VISIBLE_COLUMNS)
-      .map(|h| create_centered_cell(h, HEADER_HEIGHT).style(crate::theme::Theme::header()))
+      .map(|h| create_header_cell(h, HEADER_HEIGHT))
       .collect();
-    let header = ratatui::widgets::Row::new(header_cells).height(HEADER_HEIGHT);
+    let header = ratatui::widgets::Row::new(header_cells)
+      .height(HEADER_HEIGHT)
+      .style(crate::theme::Theme::header())
+      .bottom_margin(1);
 
     // Use filtered results if available
     let rows = if self.filtered_results.is_empty() {
@@ -1082,7 +1105,11 @@ impl Db {
       .style(crate::theme::Theme::bg_primary())
       .highlight_symbol("\n▶ ")
       .highlight_style(Style::default()) // Don't use highlight style in cell mode
-      .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+      .widths(
+        (0..VISIBLE_COLUMNS)
+          .map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16))
+          .collect::<Vec<_>>()
+      );
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
 
