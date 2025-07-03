@@ -1,0 +1,10 @@
+#+title: Todo
+
+- [X] Refactor db component into sub-components
+- [ ] Handle more database types
+  - [ ] MySQL
+  - [ ] SQLite
+  - [ ] DynamoDB
+- [ ] Create history of queries
+- [ ] Make detail view for a selected row
+
