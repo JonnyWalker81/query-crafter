@@ -48,6 +48,9 @@
             # X11 dependencies (for clipboard support)
             xorg.libxcb
             xorg.libX11
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXi
 
             # Runtime dependencies
             nodejs_20
@@ -89,8 +92,22 @@
           RUST_BACKTRACE = 1;
           RUST_LOG = "query_crafter=debug";
 
-          # OpenSSL configuration
-          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
+          # Library paths for linking
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            pkgs.xorg.libxcb
+            pkgs.xorg.libX11
+            pkgs.xorg.libXcursor
+            pkgs.xorg.libXrandr
+            pkgs.xorg.libXi
+            pkgs.openssl
+          ];
+          
+          # PKG_CONFIG configuration
+          PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [
+            pkgs.openssl.dev
+            pkgs.xorg.libxcb.dev
+            pkgs.xorg.libX11.dev
+          ];
         };
       }
     );
