@@ -1,9 +1,16 @@
+# Editor configuration
+# Choose editor backend: "tui-textarea" or "zep"
+[editor]
+backend = "zep"
+
+# Database connections
 [[connections]]
 host = "localhost"
 port = 5432
 username = "postgres"
 password = "secret5"
 database = "postgres"
+sslmode = "prefer"
 
 [[connections]]
 host = "localhost"
@@ -11,6 +18,7 @@ port = 64333
 username = "join_root"
 password = "faceBegunIllFarmer"
 database = "komodo"
+sslmode = "disable"
 
 [[connections]]
 host = "localhost"
@@ -18,3 +26,4 @@ port = 64333
 username = "postgres"
 password = "secret5"
 database = "postgres"
+sslmode = "prefer"

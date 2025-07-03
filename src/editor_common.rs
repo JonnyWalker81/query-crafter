@@ -11,13 +11,12 @@ pub enum Mode {
 
 impl Mode {
   pub fn cursor_style(&self) -> ratatui::style::Style {
-    let color = match self {
-      Self::Normal => ratatui::style::Color::Reset,
-      Self::Insert => ratatui::style::Color::LightBlue,
-      Self::Visual => ratatui::style::Color::LightYellow,
-      Self::Operator(_) => ratatui::style::Color::LightGreen,
-    };
-    ratatui::style::Style::default().fg(color).add_modifier(ratatui::style::Modifier::REVERSED)
+    match self {
+      Self::Normal => crate::theme::Theme::cursor_normal(),
+      Self::Insert => crate::theme::Theme::cursor_insert(),
+      Self::Visual => crate::theme::Theme::cursor_visual(),
+      Self::Operator(_) => crate::theme::Theme::cursor_normal(),
+    }
   }
 }
 
@@ -38,4 +37,5 @@ pub enum Transition {
   Mode(Mode),
   Pending(Input),
   Quit,
+  Action(crate::action::Action),
 }

@@ -4,6 +4,8 @@
 
 pub mod action;
 pub mod app;
+pub mod autocomplete;
+pub mod autocomplete_widget;
 pub mod cli;
 pub mod components;
 pub mod config;
@@ -11,6 +13,7 @@ pub mod editor_common;
 pub mod editor_component;
 pub mod mode;
 pub mod sql;
+pub mod theme;
 pub mod tui;
 pub mod utils;
 
@@ -29,7 +32,7 @@ async fn tokio_main() -> Result<()> {
   initialize_panic_handler()?;
 
   let args = Cli::parse();
-  let mut app = App::new(args.tick_rate, args.frame_rate, args.filename).await?;
+  let mut app = App::new(args.tick_rate, args.frame_rate, &args).await?;
   app.run().await?;
 
   Ok(())

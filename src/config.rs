@@ -1,15 +1,10 @@
-use std::{collections::HashMap, fmt, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use color_eyre::eyre::Result;
-use config::Value;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use derive_deref::{Deref, DerefMut};
 use ratatui::style::{Color, Modifier, Style};
-use serde::{
-  de::{self, Deserializer, MapAccess, Visitor},
-  Deserialize, Serialize,
-};
-use serde_json::Value as JsonValue;
+use serde::{de::Deserializer, Deserialize};
 
 use crate::{action::Action, mode::Mode};
 
@@ -23,10 +18,22 @@ pub struct AppConfig {
   pub _config_dir: PathBuf,
 }
 
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct EditorConfig {
+  #[serde(default = "default_editor_backend")]
+  pub backend: String,
+}
+
+fn default_editor_backend() -> String {
+  "tui-textarea".to_string()
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
   #[serde(default, flatten)]
   pub config: AppConfig,
+  #[serde(default)]
+  pub editor: EditorConfig,
   #[serde(default)]
   pub keybindings: KeyBindings,
   #[serde(default)]
@@ -42,6 +49,7 @@ impl Config {
       .set_default("_data_dir", data_dir.to_str().unwrap())?
       .set_default("_config_dir", config_dir.to_str().unwrap())?;
 
+    eprintln!("Config directory: {}", config_dir.display());
     let config_files = [
       ("config.json5", config::FileFormat::Json5),
       ("config.json", config::FileFormat::Json),
@@ -53,10 +61,12 @@ impl Config {
     for (file, format) in &config_files {
       builder = builder.add_source(config::File::from(config_dir.join(file)).format(*format).required(false));
       if config_dir.join(file).exists() {
+        eprintln!("Found configuration file: {}", file);
         found_config = true
       }
     }
     if !found_config {
+      eprintln!("No configuration file found in {}", config_dir.display());
       log::error!("No configuration file found. Application may not behave as expected");
     }
 

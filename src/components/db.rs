@@ -1,35 +1,157 @@
 use std::{
   collections::{BTreeMap, HashMap},
-  fmt::Display,
   fs,
   path::PathBuf,
   rc::Rc,
   time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use clipboard::{ClipboardContext, ClipboardProvider};
 use chrono;
+use clipboard::{ClipboardContext, ClipboardProvider};
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use directories::ProjectDirs;
-use ratatui::{prelude::*, widgets::*};
+use nucleo::Utf32Str;
+use ratatui::{
+  prelude::*,
+  text::{Line, Span},
+  widgets::*,
+};
 use serde::{Deserialize, Serialize};
-use sqlx::{postgres::PgPoolOptions, Postgres, Row};
-use strum::Display;
 use tokio::sync::mpsc::UnboundedSender;
-use tokio_stream::StreamExt;
-use tui_textarea::{Input, TextArea};
 
 use super::{Component, ComponentKind, Frame};
 use crate::{
   action::Action,
-  components::vim::Vim,
-  config::{Config, KeyBindings},
-  editor_common::{Mode, Transition},
+  autocomplete::{AutocompleteProvider, AutocompleteState},
+  components::{vim::Vim, zep_editor::ZepEditor},
+  config::Config,
+  editor_common::Mode,
   editor_component::EditorComponent,
 };
 
 const VISIBLE_COLUMNS: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionMode {
+  Table,   // Normal table navigation
+  Row,     // Row is selected for detail view
+  Cell,    // Individual cell selection
+  Preview, // Popup preview mode
+}
+
+#[derive(Debug)]
+pub enum EditorBackend {
+  TuiTextarea(Vim),
+  Zep(ZepEditor),
+}
+
+impl Default for EditorBackend {
+  fn default() -> Self {
+    Self::TuiTextarea(Vim::new(Mode::Normal))
+  }
+}
+
+impl EditorBackend {
+  pub fn new_from_config(backend_name: &str) -> Self {
+    match backend_name {
+      "zep" => Self::Zep(ZepEditor::default()),
+      _ => Self::TuiTextarea(Vim::new(Mode::Normal)),
+    }
+  }
+
+  pub fn as_editor_component(&mut self) -> &mut dyn EditorComponent {
+    match self {
+      Self::TuiTextarea(vim) => vim,
+      Self::Zep(zep) => zep,
+    }
+  }
+
+  pub fn get_text(&self) -> String {
+    match self {
+      Self::TuiTextarea(vim) => vim.get_text(),
+      Self::Zep(zep) => zep.get_text(),
+    }
+  }
+
+  pub fn get_selected_text(&self) -> Option<String> {
+    match self {
+      Self::TuiTextarea(vim) => vim.get_selected_text(),
+      Self::Zep(zep) => zep.get_selected_text(),
+    }
+  }
+
+  pub fn set_text(&mut self, text: &str) {
+    match self {
+      Self::TuiTextarea(vim) => vim.set_text(text),
+      Self::Zep(zep) => zep.set_text(text),
+    }
+  }
+
+  pub fn get_cursor_position(&self) -> (usize, usize) {
+    match self {
+      Self::TuiTextarea(vim) => vim.get_cursor_position(),
+      Self::Zep(_) => (0, 0), // TODO: implement for Zep
+    }
+  }
+
+  pub fn get_text_up_to_cursor(&self) -> String {
+    match self {
+      Self::TuiTextarea(vim) => vim.get_text_up_to_cursor(),
+      Self::Zep(_) => String::new(), // TODO: implement for Zep
+    }
+  }
+
+  pub fn insert_text_at_cursor(&mut self, text: &str) {
+    match self {
+      Self::TuiTextarea(vim) => vim.insert_text_at_cursor(text),
+      Self::Zep(_) => {}, // TODO: implement for Zep
+    }
+  }
+
+  pub fn delete_word_before_cursor(&mut self) {
+    match self {
+      Self::TuiTextarea(vim) => vim.delete_word_before_cursor(),
+      Self::Zep(_) => {}, // TODO: implement for Zep
+    }
+  }
+
+  // Compatibility methods for existing vim_editor usage
+  pub fn mode(&self) -> Mode {
+    match self {
+      Self::TuiTextarea(vim) => vim.mode(),
+      Self::Zep(zep) => zep.mode(), // Use Zep's actual mode
+    }
+  }
+
+  pub fn set_mode(&mut self, mode: Mode) {
+    match self {
+      Self::TuiTextarea(vim) => {
+        *vim = Vim::new(mode);
+      },
+      Self::Zep(_) => {
+        // Zep handles mode transitions through key events
+        // This is a compatibility shim - ideally we'd refactor to not need this
+      },
+    }
+  }
+
+  pub fn handle_key_event(&mut self, key: KeyEvent) -> Result<Option<Action>> {
+    self.as_editor_component().on_key_event(key)
+  }
+
+  pub fn draw(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    self.as_editor_component().draw(f, area)
+  }
+
+  pub fn draw_with_focus(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect, is_focused: bool) {
+    self.as_editor_component().draw_with_focus(f, area, is_focused)
+  }
+
+  pub fn init(&mut self, area: ratatui::layout::Rect) -> Result<()> {
+    self.as_editor_component().init(area)
+  }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct QueryHistoryEntry {
@@ -40,10 +162,7 @@ pub struct QueryHistoryEntry {
 
 impl QueryHistoryEntry {
   pub fn new(query: String, success: bool) -> Self {
-    let timestamp = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .unwrap_or_default()
-      .as_secs();
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     Self { query, timestamp, success }
   }
 
@@ -58,13 +177,20 @@ impl QueryHistoryEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct DbColumn {
+  pub name: String,
+  pub data_type: String,
+  pub is_nullable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct DbTable {
   pub name: String,
   pub schema: String,
+  pub columns: Vec<DbColumn>,
 }
 
-#[derive(Default)]
-pub struct Db<'a> {
+pub struct Db {
   command_tx: Option<UnboundedSender<Action>>,
   config: Config,
   tables: Vec<DbTable>,
@@ -73,14 +199,14 @@ pub struct Db<'a> {
   selected_headers: Vec<String>,
   query_results: Vec<Vec<String>>,
   selected_component: ComponentKind,
-  query_input: TextArea<'a>,
-  vim_editor: Vim,
+  editor_backend: EditorBackend,
   horizonal_scroll_offset: usize,
   show_row_details: bool,
   table_search_query: String,
   is_searching_tables: bool,
-  row_is_selected: bool,
+  selection_mode: SelectionMode,
   detail_row_index: usize,
+  selected_cell_index: usize, // For cell selection mode
   error_message: Option<String>,
   // Query history functionality
   query_history: Vec<QueryHistoryEntry>,
@@ -88,12 +214,119 @@ pub struct Db<'a> {
   selected_tab: usize, // 0 = Query, 1 = History
   history_file_path: PathBuf,
   last_executed_query: Option<String>, // Track last query for history saving
+  // Autocomplete functionality
+  autocomplete_state: AutocompleteState,
+  autocomplete_provider: AutocompleteProvider,
+  table_columns_cache: HashMap<String, Vec<DbColumn>>,
+  // Results search functionality
+  results_search_query: String,
+  is_searching_results: bool,
+  filtered_results: Vec<(usize, u32)>, // (original_index, fuzzy_score)
+  filtered_results_index: usize,
+  results_matcher: nucleo::Matcher,
+  // Help overlay
+  show_help: bool,
 }
 
-impl<'a> Db<'a> {
+/// Creates a `Cell` with text that is vertically centered.
+///
+/// # Arguments
+///
+/// * `text` - The text content for the cell (can be multi-line).
+/// * `row_height` - The total height of the `Row` this cell will be in.
+fn create_centered_cell(text: &str, row_height: u16) -> Cell<'_> {
+  // Handle empty text
+  if text.is_empty() {
+    let padding = "\n".repeat((row_height / 2) as usize);
+    return Cell::from(padding);
+  }
+
+  // Count the number of lines in the input text
+  let text_lines: Vec<&str> = text.lines().collect();
+  let text_height = text_lines.len() as u16;
+
+  // Calculate the vertical padding required for centering
+  let total_padding = row_height.saturating_sub(text_height);
+  let padding_top = total_padding / 2;
+  let padding_bottom = total_padding - padding_top;
+
+  // Create centered text with top and bottom padding
+  let mut centered_lines = vec![];
+
+  // Add top padding
+  for _ in 0..padding_top {
+    centered_lines.push("".to_string());
+  }
+
+  // Add the actual text lines
+  for line in text_lines {
+    centered_lines.push(line.to_string());
+  }
+
+  // Add bottom padding to ensure proper height
+  for _ in 0..padding_bottom {
+    centered_lines.push("".to_string());
+  }
+
+  // Join all lines and create the cell
+  let padded_text = centered_lines.join("\n");
+  Cell::from(padded_text)
+}
+
+impl Default for Db {
+  fn default() -> Self {
+    Self {
+      command_tx: None,
+      config: Config::default(),
+      tables: Vec::new(),
+      selected_table_index: 0,
+      selected_row_index: 0,
+      selected_headers: Vec::new(),
+      query_results: Vec::new(),
+      selected_component: ComponentKind::Home,
+      editor_backend: EditorBackend::default(),
+      horizonal_scroll_offset: 0,
+      show_row_details: false,
+      table_search_query: String::new(),
+      is_searching_tables: false,
+      selection_mode: SelectionMode::Table,
+      detail_row_index: 0,
+      selected_cell_index: 0,
+      error_message: None,
+      query_history: Vec::new(),
+      selected_history_index: 0,
+      selected_tab: 0,
+      history_file_path: PathBuf::new(),
+      last_executed_query: None,
+      autocomplete_state: AutocompleteState::new(),
+      autocomplete_provider: AutocompleteProvider::new(),
+      table_columns_cache: HashMap::new(),
+      results_search_query: String::new(),
+      is_searching_results: false,
+      filtered_results: Vec::new(),
+      filtered_results_index: 0,
+      results_matcher: nucleo::Matcher::new(nucleo::Config::DEFAULT),
+      show_help: false,
+    }
+  }
+}
+
+impl Db {
   pub fn new() -> Self {
+    Self::new_with_config(None)
+  }
+
+  pub fn new_with_config(config: Option<Config>) -> Self {
     let mut instance = Self::default();
-    
+
+    // Initialize editor backend based on config
+    if let Some(ref config) = config {
+      let backend = &config.editor.backend;
+      eprintln!("Editor backend: {backend}");
+      instance.editor_backend = EditorBackend::new_from_config(backend);
+      instance.config = config.clone();
+    }
+
     // Initialize history file path in user's config directory
     if let Some(proj_dirs) = ProjectDirs::from("com", "query-crafter", "query-crafter") {
       instance.history_file_path = proj_dirs.config_dir().join("query_history.json");
@@ -101,15 +334,16 @@ impl<'a> Db<'a> {
       // Fallback to current directory if config dir not available
       instance.history_file_path = PathBuf::from("query_history.json");
     }
-    
+
+    // Initialize autocomplete functionality
+    instance.autocomplete_state = AutocompleteState::new();
+    instance.autocomplete_provider = AutocompleteProvider::new();
+    instance.table_columns_cache = HashMap::new();
+
     // Load existing history
     instance.load_query_history();
-    
-    instance
-  }
 
-  fn get_history_file_path(&self) -> &PathBuf {
-    &self.history_file_path
+    instance
   }
 
   fn load_query_history(&mut self) {
@@ -125,7 +359,7 @@ impl<'a> Db<'a> {
     if let Some(parent) = self.history_file_path.parent() {
       let _ = fs::create_dir_all(parent);
     }
-    
+
     // Save history to file
     if let Ok(json) = serde_json::to_string_pretty(&self.query_history) {
       let _ = fs::write(&self.history_file_path, json);
@@ -134,30 +368,30 @@ impl<'a> Db<'a> {
 
   fn add_to_history(&mut self, query: &str, success: bool) {
     let query = query.trim().to_string();
-    
+
     // Don't add empty queries
     if query.is_empty() {
       return;
     }
-    
+
     // Only add successful queries to history
     if !success {
       return;
     }
-    
+
     // Check if this exact query already exists in recent history (last 10 entries)
     let recent_limit = 10.min(self.query_history.len());
     let recent_queries = &self.query_history[self.query_history.len().saturating_sub(recent_limit)..];
-    
+
     if !recent_queries.iter().any(|entry| entry.query == query) {
       let entry = QueryHistoryEntry::new(query, success);
       self.query_history.push(entry);
-      
+
       // Keep only last 100 entries to prevent unlimited growth
       if self.query_history.len() > 100 {
         self.query_history.drain(0..self.query_history.len() - 100);
       }
-      
+
       self.save_query_history();
     }
   }
@@ -171,8 +405,16 @@ impl<'a> Db<'a> {
       return None;
     }
 
-    let json_str = if self.row_is_selected {
-      if let Some(selected_row) = self.query_results.get(self.selected_row_index) {
+    // Get the actual row index from filtered results if searching
+    let actual_row_index =
+      if !self.filtered_results.is_empty() && self.filtered_results_index < self.filtered_results.len() {
+        self.filtered_results[self.filtered_results_index].0
+      } else {
+        self.selected_row_index
+      };
+
+    let json_str = if self.selection_mode == SelectionMode::Row {
+      if let Some(selected_row) = self.query_results.get(actual_row_index) {
         if let Some(selected_cell) = selected_row.get(self.detail_row_index) {
           selected_cell.to_string()
         } else {
@@ -182,22 +424,54 @@ impl<'a> Db<'a> {
         String::new()
       }
     } else {
-      let row_data = self.query_results[self.selected_row_index].iter().zip(self.selected_headers.iter()).fold(
-        BTreeMap::new(),
-        |mut acc, (value, header)| {
-          acc.insert(header, value);
-          acc
-        },
-      );
-
-      serde_json::to_string_pretty(&row_data).unwrap()
+      if let Some(row) = self.query_results.get(actual_row_index) {
+        let row_data =
+          row.iter().zip(self.selected_headers.iter()).fold(BTreeMap::new(), |mut acc, (value, header)| {
+            acc.insert(header, value);
+            acc
+          });
+        serde_json::to_string_pretty(&row_data).unwrap()
+      } else {
+        String::new()
+      }
     };
 
     Some(json_str)
   }
 
-  fn table_row_count(&self) -> usize {
-    self.tables.len()
+  /// Filter query results using fuzzy search across all columns
+  fn filter_results_fuzzy(&mut self) {
+    self.filtered_results.clear();
+
+    if self.results_search_query.is_empty() {
+      // Empty search shows all results
+      for idx in 0..self.query_results.len() {
+        self.filtered_results.push((idx, 100));
+      }
+      return;
+    }
+
+    let mut query_buf = Vec::new();
+    let query_utf32 = Utf32Str::new(&self.results_search_query, &mut query_buf);
+
+    for (idx, row) in self.query_results.iter().enumerate() {
+      // Concatenate all column values with spaces for full-row searching
+      let row_text = row.join(" ");
+      let mut text_buf = Vec::new();
+      let text_utf32 = Utf32Str::new(&row_text, &mut text_buf);
+
+      if let Some(score) = self.results_matcher.fuzzy_match(text_utf32, query_utf32) {
+        self.filtered_results.push((idx, score as u32));
+      }
+    }
+
+    // Sort by score descending (best matches first)
+    self.filtered_results.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Reset filtered index if out of bounds
+    if self.filtered_results_index >= self.filtered_results.len() {
+      self.filtered_results_index = 0;
+    }
   }
 
   fn render_table_list(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
@@ -206,12 +480,13 @@ impl<'a> Db<'a> {
       .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
       .split(chunks[1]);
 
-    let tables_border_color = if self.selected_component == ComponentKind::Home { Color::Cyan } else { Color::White };
+    let is_focused = self.selected_component == ComponentKind::Home;
     let tables = Block::default()
       .borders(Borders::ALL)
-      .style(Style::default().fg(tables_border_color))
-      .title("Tables")
-      .border_type(BorderType::Plain);
+      .style(if is_focused { crate::theme::Theme::border_focused() } else { crate::theme::Theme::border_normal() })
+      .title("[1] Tables")
+      .title_style(crate::theme::Theme::title())
+      .border_type(BorderType::Rounded);
 
     let table_list_chunks = if self.is_searching_tables {
       Layout::default()
@@ -223,23 +498,45 @@ impl<'a> Db<'a> {
     };
 
     if self.is_searching_tables {
-      let search_block = Block::default().borders(Borders::ALL).title("Search");
+      let search_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Search")
+        .title_style(crate::theme::Theme::title())
+        .border_style(crate::theme::Theme::border_focused())
+        .border_type(BorderType::Rounded);
       let search_text =
-        Paragraph::new(Text::styled(self.table_search_query.to_string(), Style::default().fg(Color::Yellow)))
-          .block(search_block);
+        Paragraph::new(Text::styled(self.table_search_query.to_string(), crate::theme::Theme::warning()))
+          .block(search_block)
+          .style(crate::theme::Theme::input());
       f.render_widget(search_text, table_list_chunks[0]);
     }
 
     let table_render_chunk = if self.is_searching_tables { table_list_chunks[1] } else { table_list_chunks[0] };
 
-    let mut table_list_state = ListState::default();
-    table_list_state.select(Some(self.selected_table_index));
-    let items: Vec<ListItem> = self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect();
+    // Check if we have tables to display
+    if self.tables.is_empty() && self.is_searching_tables && !self.table_search_query.is_empty() {
+      // Show "No tables found" message for empty search results
+      let no_results_msg = format!("No tables found matching '{}'", self.table_search_query);
+      let no_results = Paragraph::new(Text::styled(no_results_msg, crate::theme::Theme::warning()))
+        .block(tables)
+        .style(crate::theme::Theme::bg_primary())
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: true });
+      f.render_widget(no_results, table_render_chunk);
+    } else {
+      // Render normal table list
+      let mut table_list_state = ListState::default();
+      if !self.tables.is_empty() {
+        table_list_state.select(Some(self.selected_table_index));
+      }
+      let items: Vec<ListItem> = self.tables.iter().map(|t| ListItem::new(t.name.to_string())).collect();
 
-    let list = List::new(items)
-      .block(tables)
-      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD));
-    f.render_stateful_widget(list, table_render_chunk, &mut table_list_state);
+      let list = List::new(items)
+        .block(tables)
+        .style(crate::theme::Theme::bg_primary())
+        .highlight_style(crate::theme::Theme::selection_active());
+      f.render_stateful_widget(list, table_render_chunk, &mut table_list_state);
+    }
 
     Ok(table_chunks)
   }
@@ -247,54 +544,65 @@ impl<'a> Db<'a> {
   fn render_query_input(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
     let query_chunks = Layout::default()
       .direction(Direction::Vertical)
-      .constraints([Constraint::Length(2), Constraint::Length(6), Constraint::Min(1)].as_ref())
+      .constraints([Constraint::Length(2), Constraint::Length(20), Constraint::Min(1)].as_ref())
       .split(chunks[1]);
 
-    let query_border_color = if self.selected_component == ComponentKind::Query { Color::Cyan } else { Color::White };
-    let border_style = Style::default().fg(query_border_color);
-
     // Render tabs
-    let tabs = Tabs::new(["Query", "History"])
-      .style(Style::new().white())
-      .highlight_style(Style::new().yellow().underlined())
+    let tabs = Tabs::new(["Query [t]", "History [t]"])
+      .style(crate::theme::Theme::tab_normal())
+      .highlight_style(crate::theme::Theme::tab_selected())
       .select(self.selected_tab)
       .padding("", "")
       .divider(" ");
     f.render_widget(tabs, query_chunks[0]);
 
     // Render content based on selected tab
+    let is_query_focused = self.selected_component == ComponentKind::Query;
     match self.selected_tab {
       0 => {
-        // Query tab - show the text editor
-        let input_block = Block::default().borders(Borders::ALL).border_style(border_style).title("Query");
-        self.query_input.set_block(input_block);
-        f.render_widget(&self.query_input, query_chunks[1]);
+        // Query tab - show the editor backend with focus state
+        self.editor_backend.draw_with_focus(f, query_chunks[1], is_query_focused);
+
+        // Render autocomplete popup if active
+        if self.autocomplete_state.is_active && is_query_focused {
+          self.render_autocomplete_popup(f, query_chunks[1])?;
+        }
       },
       1 => {
         // History tab - show the history list
-        self.render_history_list(f, query_chunks[1], query_border_color)?;
+        self.render_history_list(f, query_chunks[1])?;
       },
       _ => {
         // Default to query tab
-        let input_block = Block::default().borders(Borders::ALL).border_style(border_style).title("Query");
-        self.query_input.set_block(input_block);
-        f.render_widget(&self.query_input, query_chunks[1]);
-      }
+        self.editor_backend.draw_with_focus(f, query_chunks[1], is_query_focused);
+
+        // Render autocomplete popup if active
+        if self.autocomplete_state.is_active && is_query_focused {
+          self.render_autocomplete_popup(f, query_chunks[1])?;
+        }
+      },
     }
 
     Ok(query_chunks)
   }
 
-  fn render_history_list(&mut self, f: &mut Frame<'_>, area: Rect, border_color: Color) -> Result<()> {
+  fn render_history_list(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+    let is_focused = self.selected_component == ComponentKind::Query;
     let history_block = Block::default()
       .borders(Borders::ALL)
-      .border_style(Style::default().fg(border_color))
-      .title("Query History");
+      .border_style(if is_focused {
+        crate::theme::Theme::border_focused()
+      } else {
+        crate::theme::Theme::border_normal()
+      })
+      .title("[2] Query History")
+      .title_style(crate::theme::Theme::title())
+      .border_type(BorderType::Rounded);
 
     if self.query_history.is_empty() {
       let empty_msg = Paragraph::new("No query history available")
         .block(history_block)
-        .style(Style::default().fg(Color::Gray))
+        .style(crate::theme::Theme::muted())
         .alignment(Alignment::Center);
       f.render_widget(empty_msg, area);
       return Ok(());
@@ -305,100 +613,50 @@ impl<'a> Db<'a> {
       .iter()
       .rev() // Show most recent first
       .enumerate()
-      .map(|(idx, entry)| {
+      .map(|(_idx, entry)| {
         let truncated_query = if entry.query.len() > 60 {
           format!("{}...", &entry.query[..57])
         } else {
           entry.query.clone()
         };
-        
+
         let time_str = chrono::DateTime::from_timestamp(entry.timestamp as i64, 0)
           .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
           .unwrap_or_else(|| "Unknown".to_string());
 
         let display_text = format!("{} | {}", time_str, truncated_query);
-        
+
         ListItem::new(display_text)
-          .style(if entry.success { 
-            Style::default().fg(Color::Green) 
-          } else { 
-            Style::default().fg(Color::Red) 
+          .style(if entry.success {
+            crate::theme::Theme::success()
+          } else {
+            crate::theme::Theme::error()
           })
       })
       .collect();
 
     let mut list_state = ListState::default();
-    // Convert reverse index back to forward index for selection
-    if !self.query_history.is_empty() {
-      let reverse_index = self.query_history.len().saturating_sub(1).saturating_sub(self.selected_history_index);
-      list_state.select(Some(reverse_index));
+    // selected_history_index maps directly to display position (0 = most recent = top)
+    if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() {
+      list_state.select(Some(self.selected_history_index));
     }
 
     let history_list = List::new(items)
       .block(history_block)
-      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD));
+      .style(crate::theme::Theme::bg_primary())
+      .highlight_style(crate::theme::Theme::selection_active());
 
     f.render_stateful_widget(history_list, area, &mut list_state);
 
     Ok(())
   }
 
-  fn render_query_result_details(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
-    let table_chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-      .split(chunks[2]);
-
-    if let Some(selected_row) = self.query_results.get(self.selected_row_index) {
-      let normal_style = Style::default();
-      let header_cells = ["Name", "value"]
-        .iter()
-        .map(|h| Cell::from(h.to_string()).style(Style::default().fg(Color::Red).bg(Color::Green)));
-      let header = ratatui::widgets::Row::new(header_cells).style(normal_style).height(1);
-
-      let rows = selected_row
-        .iter()
-        .zip(self.selected_headers.iter())
-        .map(|(c, r)| {
-          let cells = [Cell::from(r.to_string()), Cell::from(c.to_string())];
-          ratatui::widgets::Row::new(cells).height(1).bottom_margin(1)
-        })
-        .collect::<Vec<_>>();
-
-      let status_text =
-        Paragraph::new(Text::styled(format!("Rows: {}", rows.len()), Style::default().fg(Color::Yellow)));
-      f.render_widget(status_text, table_chunks[1]);
-
-      let results_border_color =
-        if self.selected_component == ComponentKind::Results { Color::Cyan } else { Color::White };
-      let mut table_state = TableState::default();
-      table_state.select(Some(self.detail_row_index));
-      let result_table = Table::default()
-        .rows(rows)
-        .header(header)
-        .column_spacing(10)
-        .block(
-          Block::default()
-            .borders(Borders::ALL)
-            .title("Results")
-            .fg(results_border_color)
-            .border_type(BorderType::Plain),
-        )
-        .highlight_symbol(">>")
-        .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
-        .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
-
-      f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
-    }
-
-    Ok(chunks)
-  }
-
   fn render_query_results(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
-    if self.row_is_selected {
-      self.render_query_result_details(f, chunks)
-    } else {
-      self.render_query_results_table(f, chunks)
+    match self.selection_mode {
+      SelectionMode::Row => self.render_split_view(f, chunks),
+      SelectionMode::Preview => self.render_preview_popup(f, chunks),
+      SelectionMode::Cell => self.render_cell_selection_view(f, chunks),
+      SelectionMode::Table => self.render_query_results_table(f, chunks),
     }
   }
 
@@ -409,39 +667,99 @@ impl<'a> Db<'a> {
       .split(chunks[2]);
 
     let skip_count = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
-    let normal_style = Style::default();
-    let header_cells = self
+
+    // Define consistent row heights for better vertical centering
+    const HEADER_HEIGHT: u16 = 2;
+    const ROW_HEIGHT: u16 = 3;
+
+    let header_cells: Vec<_> = self
       .selected_headers
       .iter()
       .skip(skip_count)
       .take(VISIBLE_COLUMNS)
-      .map(|h| Cell::from(h.to_string()).style(Style::default().fg(Color::Red).bg(Color::Green)));
-    let header = ratatui::widgets::Row::new(header_cells).style(normal_style).height(1);
+      .map(|h| create_centered_cell(h, HEADER_HEIGHT).style(crate::theme::Theme::header()))
+      .collect();
+    let header = ratatui::widgets::Row::new(header_cells).height(HEADER_HEIGHT);
 
-    let rows = self
-      .query_results
-      .iter()
-      .map(|r| {
-        let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| Cell::from(c.to_string()));
-        ratatui::widgets::Row::new(cells).height(1).bottom_margin(1)
-      })
-      .collect::<Vec<_>>();
+    // Use filtered results if available
+    let rows = if self.filtered_results.is_empty() {
+      // No search active or no results - show all rows
+      self
+        .query_results
+        .iter()
+        .map(|r| {
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
+        })
+        .collect::<Vec<_>>()
+    } else {
+      // Show only filtered rows
+      self
+        .filtered_results
+        .iter()
+        .filter_map(|(idx, _score)| self.query_results.get(*idx))
+        .map(|r| {
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
+        })
+        .collect::<Vec<_>>()
+    };
 
-    let status_text = Paragraph::new(Text::styled(format!("Rows: {}", rows.len()), Style::default().fg(Color::Yellow)));
+    // Update status text to show filtered vs total
+    let status_text = if !self.results_search_query.is_empty() {
+      let filtered_count = self.filtered_results.len();
+      let total_count = self.query_results.len();
+      Paragraph::new(Text::styled(
+        format!("Rows: {}/{} (search: '{}')", filtered_count, total_count, self.results_search_query),
+        crate::theme::Theme::info(),
+      ))
+    } else {
+      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), crate::theme::Theme::info()))
+    };
     f.render_widget(status_text, table_chunks[1]);
 
-    let results_border_color =
-      if self.selected_component == ComponentKind::Results { Color::Cyan } else { Color::White };
+    let is_results_focused = self.selected_component == ComponentKind::Results;
     let mut table_state = TableState::default();
-    table_state.select(Some(self.selected_row_index));
+
+    // Update table state to use filtered index if searching
+    if !self.filtered_results.is_empty() {
+      table_state.select(Some(self.filtered_results_index));
+    } else {
+      table_state.select(Some(self.selected_row_index));
+    }
+
+    // Update title based on search mode
+    let title = if self.is_searching_results {
+      format!("[3] Results - Search: {}_", self.results_search_query)
+    } else if !self.results_search_query.is_empty() {
+      format!("[3] Results - Filter: {}", self.results_search_query)
+    } else {
+      "[3] Results".to_string()
+    };
+
     let result_table = Table::default()
       .rows(rows)
       .header(header)
       .column_spacing(10)
       .block(
-        Block::default().borders(Borders::ALL).title("Results").fg(results_border_color).border_type(BorderType::Plain),
+        Block::default()
+          .borders(Borders::ALL)
+          .title(title)
+          .title_style(if self.is_searching_results {
+            crate::theme::Theme::warning()
+          } else {
+            crate::theme::Theme::title()
+          })
+          .border_style(if is_results_focused {
+            crate::theme::Theme::border_focused()
+          } else {
+            crate::theme::Theme::border_normal()
+          })
+          .border_type(BorderType::Rounded),
       )
-      .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black).add_modifier(Modifier::BOLD))
+      .style(crate::theme::Theme::bg_primary())
+      .highlight_symbol("\n▶ ")
+      .highlight_style(crate::theme::Theme::selection_active())
       .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
@@ -449,8 +767,16 @@ impl<'a> Db<'a> {
     if self.show_row_details {
       if let Some(json_str) = self.json() {
         let area = self.centered_rect(80, 60, f.area());
-        let block = Block::default().title("Row Details").borders(Borders::ALL);
-        let paragraph = Paragraph::new(json_str.as_str()).block(block).wrap(Wrap { trim: true });
+        let block = Block::default()
+          .title("Row Details")
+          .title_style(crate::theme::Theme::title())
+          .borders(Borders::ALL)
+          .border_style(crate::theme::Theme::border_focused())
+          .border_type(BorderType::Rounded);
+        let paragraph = Paragraph::new(json_str.as_str())
+          .block(block)
+          .style(crate::theme::Theme::bg_secondary())
+          .wrap(Wrap { trim: true });
         f.render_widget(Clear, area);
         f.render_widget(paragraph, area);
       }
@@ -459,11 +785,384 @@ impl<'a> Db<'a> {
     Ok(chunks)
   }
 
+  fn render_split_view(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    // Split the results area into two panes: table (60%) and details (40%)
+    let split_chunks = Layout::default()
+      .direction(Direction::Horizontal)
+      .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
+      .split(chunks[2]);
+
+    // Render the table on the left
+    self.render_query_results_table_in_area(f, split_chunks[0])?;
+
+    // Render the details on the right
+    self.render_detail_pane(f, split_chunks[1])?;
+
+    Ok(chunks)
+  }
+
+  fn render_preview_popup(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    // First render the normal table view
+    self.render_query_results_table(f, chunks.clone())?;
+
+    // Then render a popup overlay with row details
+    if let Some(selected_row) = self.get_selected_row() {
+      let area = self.centered_rect(70, 70, f.area());
+      let block = Block::default()
+        .title("Row Preview (ESC to close)")
+        .title_style(crate::theme::Theme::title())
+        .borders(Borders::ALL)
+        .border_style(crate::theme::Theme::border_focused())
+        .border_type(BorderType::Rounded);
+
+      // Format row data nicely
+      let mut text_lines = vec![];
+      for (header, value) in self.selected_headers.iter().zip(selected_row.iter()) {
+        text_lines
+          .push(Line::from(vec![Span::styled(format!("{}: ", header), crate::theme::Theme::info()), Span::raw(value)]));
+      }
+
+      let paragraph =
+        Paragraph::new(text_lines).block(block).style(crate::theme::Theme::bg_secondary()).wrap(Wrap { trim: true });
+
+      f.render_widget(Clear, area);
+      f.render_widget(paragraph, area);
+    }
+
+    Ok(chunks)
+  }
+
+  fn render_query_results_table_in_area(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+    let table_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+      .split(area);
+
+    let skip_count = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
+
+    // Define consistent row heights for better vertical centering
+    const HEADER_HEIGHT: u16 = 2;
+    const ROW_HEIGHT: u16 = 3;
+
+    let header_cells: Vec<_> = self
+      .selected_headers
+      .iter()
+      .skip(skip_count)
+      .take(VISIBLE_COLUMNS)
+      .map(|h| create_centered_cell(h, HEADER_HEIGHT).style(crate::theme::Theme::header()))
+      .collect();
+    let header = ratatui::widgets::Row::new(header_cells).height(HEADER_HEIGHT);
+
+    // Use filtered results if available
+    let rows = if self.filtered_results.is_empty() {
+      // No search active or no results - show all rows
+      self
+        .query_results
+        .iter()
+        .map(|r| {
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
+        })
+        .collect::<Vec<_>>()
+    } else {
+      // Show only filtered rows
+      self
+        .filtered_results
+        .iter()
+        .filter_map(|(idx, _score)| self.query_results.get(*idx))
+        .map(|r| {
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
+        })
+        .collect::<Vec<_>>()
+    };
+
+    // Update status text to show filtered vs total
+    let status_text = if !self.results_search_query.is_empty() {
+      let filtered_count = self.filtered_results.len();
+      let total_count = self.query_results.len();
+      Paragraph::new(Text::styled(
+        format!("Rows: {}/{} (search: '{}')", filtered_count, total_count, self.results_search_query),
+        crate::theme::Theme::info(),
+      ))
+    } else {
+      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), crate::theme::Theme::info()))
+    };
+    f.render_widget(status_text, table_chunks[1]);
+
+    let is_results_focused = self.selected_component == ComponentKind::Results;
+    let mut table_state = TableState::default();
+
+    // Update table state to use filtered index if searching
+    if !self.filtered_results.is_empty() {
+      table_state.select(Some(self.filtered_results_index));
+    } else {
+      table_state.select(Some(self.selected_row_index));
+    }
+
+    // Update title based on search mode
+    let title = if self.is_searching_results {
+      format!("[3] Results - Search: {}_", self.results_search_query)
+    } else if !self.results_search_query.is_empty() {
+      format!("[3] Results - Filter: {}", self.results_search_query)
+    } else {
+      "[3] Results".to_string()
+    };
+
+    let result_table = Table::default()
+      .rows(rows)
+      .header(header)
+      .column_spacing(10)
+      .block(
+        Block::default()
+          .borders(Borders::ALL)
+          .title(title)
+          .title_style(if self.is_searching_results {
+            crate::theme::Theme::warning()
+          } else {
+            crate::theme::Theme::title()
+          })
+          .border_style(if is_results_focused && self.selection_mode == SelectionMode::Table {
+            crate::theme::Theme::border_focused()
+          } else {
+            crate::theme::Theme::border_normal()
+          })
+          .border_type(BorderType::Rounded),
+      )
+      .style(crate::theme::Theme::bg_primary())
+      .highlight_symbol("\n▶ ")
+      .highlight_style(crate::theme::Theme::selection_active())
+      .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+
+    f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
+
+    Ok(())
+  }
+
+  fn render_detail_pane(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+    if let Some(selected_row) = self.get_selected_row() {
+      let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Row Details")
+        .title_style(crate::theme::Theme::title())
+        .border_style(
+          if self.selected_component == ComponentKind::Results && self.selection_mode == SelectionMode::Row {
+            crate::theme::Theme::border_focused()
+          } else {
+            crate::theme::Theme::border_normal()
+          },
+        )
+        .border_type(BorderType::Rounded);
+
+      // Create a table showing column names and values
+      let header_cells =
+        ["Column", "Value"].iter().map(|h| Cell::from(h.to_string()).style(crate::theme::Theme::header()));
+      let header = ratatui::widgets::Row::new(header_cells).style(crate::theme::Theme::bg_primary()).height(1);
+
+      let rows = selected_row
+        .iter()
+        .zip(self.selected_headers.iter())
+        .map(|(value, column)| {
+          let cells = [Cell::from(column.to_string()), Cell::from(value.to_string())];
+          ratatui::widgets::Row::new(cells).height(1)
+        })
+        .collect::<Vec<_>>();
+
+      let mut table_state = TableState::default();
+      table_state.select(Some(self.detail_row_index));
+
+      let detail_table = Table::default()
+        .rows(rows)
+        .header(header)
+        .block(block)
+        .style(crate::theme::Theme::bg_primary())
+        .highlight_symbol("▶ ")
+        .highlight_style(crate::theme::Theme::selection_active())
+        .widths([Constraint::Percentage(30), Constraint::Percentage(70)]);
+
+      f.render_stateful_widget(detail_table, area, &mut table_state);
+    }
+
+    Ok(())
+  }
+
+  fn render_cell_selection_view(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    let table_chunks = Layout::default()
+      .direction(Direction::Vertical)
+      .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+      .split(chunks[2]);
+
+    // Auto-scroll to keep selected cell in view
+    let cell_page = self.selected_cell_index / VISIBLE_COLUMNS;
+    if cell_page != self.horizonal_scroll_offset {
+      self.horizonal_scroll_offset = cell_page;
+    }
+
+    let skip_count = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
+
+    // Define consistent row heights for better vertical centering
+    const HEADER_HEIGHT: u16 = 2;
+    const ROW_HEIGHT: u16 = 3;
+
+    let header_cells: Vec<_> = self
+      .selected_headers
+      .iter()
+      .skip(skip_count)
+      .take(VISIBLE_COLUMNS)
+      .map(|h| create_centered_cell(h, HEADER_HEIGHT).style(crate::theme::Theme::header()))
+      .collect();
+    let header = ratatui::widgets::Row::new(header_cells).height(HEADER_HEIGHT);
+
+    // Use filtered results if available
+    let rows = if self.filtered_results.is_empty() {
+      // No search active or no results - show all rows
+      self
+        .query_results
+        .iter()
+        .enumerate()
+        .map(|(row_idx, r)| {
+          let cells = r.iter().enumerate().skip(skip_count).take(VISIBLE_COLUMNS).map(|(actual_col_idx, c)| {
+            let cell = create_centered_cell(&c, ROW_HEIGHT);
+            // Highlight the selected cell
+            if row_idx == self.selected_row_index && actual_col_idx == self.selected_cell_index {
+              cell.style(crate::theme::Theme::selection_active())
+            } else {
+              cell
+            }
+          });
+          ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
+        })
+        .collect::<Vec<_>>()
+    } else {
+      // Show only filtered rows
+      self
+        .filtered_results
+        .iter()
+        .filter_map(|(idx, _score)| self.query_results.get(*idx).map(|row| (*idx, row)))
+        .map(|(row_idx, r)| {
+          let cells = r.iter().enumerate().skip(skip_count).take(VISIBLE_COLUMNS).map(|(actual_col_idx, c)| {
+            let cell = create_centered_cell(&c, ROW_HEIGHT);
+            // Highlight the selected cell
+            if row_idx == self.selected_row_index && actual_col_idx == self.selected_cell_index {
+              cell.style(crate::theme::Theme::selection_active())
+            } else {
+              cell
+            }
+          });
+          ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
+        })
+        .collect::<Vec<_>>()
+    };
+
+    // Update status text to show cell position
+    let column_name = self.selected_headers.get(self.selected_cell_index).cloned().unwrap_or_else(|| "?".to_string());
+    let status_text = Paragraph::new(Text::styled(
+      format!(
+        "Cell Mode - Row: {}/{}, Col: {} ({}/{}) - Press ESC to exit",
+        self.selected_row_index + 1,
+        self.query_results.len(),
+        column_name,
+        self.selected_cell_index + 1,
+        self.selected_headers.len()
+      ),
+      crate::theme::Theme::warning(),
+    ));
+    f.render_widget(status_text, table_chunks[1]);
+
+    let is_results_focused = self.selected_component == ComponentKind::Results;
+    let mut table_state = TableState::default();
+
+    // Update table state to use filtered index if searching
+    if !self.filtered_results.is_empty() {
+      table_state.select(Some(self.filtered_results_index));
+    } else {
+      table_state.select(Some(self.selected_row_index));
+    }
+
+    let result_table = Table::default()
+      .rows(rows)
+      .header(header)
+      .column_spacing(10)
+      .block(
+        Block::default()
+          .borders(Borders::ALL)
+          .title("[3] Results - Cell Selection")
+          .title_style(crate::theme::Theme::warning())
+          .border_style(if is_results_focused {
+            crate::theme::Theme::border_focused()
+          } else {
+            crate::theme::Theme::border_normal()
+          })
+          .border_type(BorderType::Rounded),
+      )
+      .style(crate::theme::Theme::bg_primary())
+      .highlight_symbol("\n▶ ")
+      .highlight_style(Style::default()) // Don't use highlight style in cell mode
+      .widths([Constraint::Length(40), Constraint::Length(40), Constraint::Length(40)]);
+
+    f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
+
+    Ok(chunks)
+  }
+
+  fn get_selected_row(&self) -> Option<&Vec<String>> {
+    // Get the actual row index from filtered results if searching
+    let actual_row_index =
+      if !self.filtered_results.is_empty() && self.filtered_results_index < self.filtered_results.len() {
+        self.filtered_results[self.filtered_results_index].0
+      } else {
+        self.selected_row_index
+      };
+
+    self.query_results.get(actual_row_index)
+  }
+
+  fn get_copy_content(&self, full_row: bool, as_json: bool) -> Option<String> {
+    let selected_row = self.get_selected_row()?;
+
+    if as_json {
+      // Copy as JSON
+      let row_data =
+        selected_row.iter().zip(self.selected_headers.iter()).fold(BTreeMap::new(), |mut acc, (value, header)| {
+          acc.insert(header.clone(), value.clone());
+          acc
+        });
+      serde_json::to_string_pretty(&row_data).ok()
+    } else if full_row {
+      // Copy entire row as TSV
+      Some(selected_row.join("\t"))
+    } else {
+      // Copy based on selection mode
+      match self.selection_mode {
+        SelectionMode::Cell => {
+          // Copy specific cell
+          selected_row.get(self.selected_cell_index).cloned()
+        },
+        SelectionMode::Row => {
+          // Copy the currently selected detail cell
+          selected_row.get(self.detail_row_index).cloned()
+        },
+        _ => {
+          // In table mode, copy the whole row as TSV
+          Some(selected_row.join("\t"))
+        },
+      }
+    }
+  }
+
   fn render_error(&mut self, f: &mut Frame<'_>) -> Result<()> {
     if let Some(error_message) = &self.error_message {
       let area = self.centered_rect(60, 20, f.area());
-      let block = Block::default().title("Error").borders(Borders::ALL).border_style(Style::default().fg(Color::Red));
-      let paragraph = Paragraph::new(error_message.as_str()).block(block).wrap(Wrap { trim: true });
+      let block = Block::default()
+        .title("Error")
+        .title_style(crate::theme::Theme::error())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(crate::theme::Theme::ERROR))
+        .border_type(BorderType::Rounded);
+      let paragraph = Paragraph::new(error_message.as_str())
+        .block(block)
+        .style(crate::theme::Theme::bg_secondary())
+        .wrap(Wrap { trim: true });
       f.render_widget(Clear, area);
       f.render_widget(paragraph, area);
     }
@@ -471,55 +1170,72 @@ impl<'a> Db<'a> {
     Ok(())
   }
 
-  fn toggle_comment_on_textarea(&mut self) {
-    let cursor_row = self.query_input.cursor().0;
-    let lines = self.query_input.lines().to_vec(); // Clone to avoid borrowing issues
-
-    if cursor_row >= lines.len() {
-      return;
+  fn render_help(&mut self, f: &mut Frame<'_>) -> Result<()> {
+    if !self.show_help {
+      return Ok(());
     }
 
-    let current_line = &lines[cursor_row];
-    let trimmed = current_line.trim_start();
+    let area = self.centered_rect(80, 80, f.area());
+    let block = Block::default()
+      .title("Keyboard Shortcuts (ESC to close)")
+      .title_style(crate::theme::Theme::title())
+      .borders(Borders::ALL)
+      .border_style(crate::theme::Theme::border_focused())
+      .border_type(BorderType::Rounded);
 
-    // Use SQL comment style for database queries
-    let comment_prefix = "--";
+    let help_text = vec![
+      Line::from(vec![Span::styled("Navigation", crate::theme::Theme::header())]),
+      Line::from(vec![
+        Span::styled("1/2/3", crate::theme::Theme::info()),
+        Span::raw(" - Switch between Tables/Query/Results"),
+      ]),
+      Line::from(vec![
+        Span::styled("↑/↓/←/→", crate::theme::Theme::info()),
+        Span::raw(" - Navigate tables/rows/columns"),
+      ]),
+      Line::from(vec![Span::styled("j/k/h/l", crate::theme::Theme::info()), Span::raw(" - Vim-style navigation")]),
+      Line::from(""),
+      Line::from(vec![Span::styled("Tables (Panel 1)", crate::theme::Theme::header())]),
+      Line::from(vec![Span::styled("/", crate::theme::Theme::info()), Span::raw(" - Search tables")]),
+      Line::from(vec![Span::styled("Enter", crate::theme::Theme::info()), Span::raw(" - Load selected table")]),
+      Line::from(""),
+      Line::from(vec![Span::styled("Query Editor (Panel 2)", crate::theme::Theme::header())]),
+      Line::from(vec![Span::styled("Ctrl+Enter", crate::theme::Theme::info()), Span::raw(" - Execute query")]),
+      Line::from(vec![Span::styled("Ctrl+u", crate::theme::Theme::info()), Span::raw(" - Clear query editor")]),
+      Line::from(vec![Span::styled("Ctrl+Space", crate::theme::Theme::info()), Span::raw(" - Trigger autocomplete")]),
+      Line::from(vec![
+        Span::styled("Tab", crate::theme::Theme::info()),
+        Span::raw(" - Switch between Query/History tabs"),
+      ]),
+      Line::from(""),
+      Line::from(vec![Span::styled("Results (Panel 3)", crate::theme::Theme::header())]),
+      Line::from(vec![Span::styled("/", crate::theme::Theme::info()), Span::raw(" - Search results")]),
+      Line::from(vec![Span::styled("Space", crate::theme::Theme::info()), Span::raw(" - Toggle row detail view")]),
+      Line::from(vec![Span::styled("p", crate::theme::Theme::info()), Span::raw(" - Preview row in popup")]),
+      Line::from(vec![Span::styled("v", crate::theme::Theme::info()), Span::raw(" - Enter cell selection mode")]),
+      Line::from(vec![Span::styled("r", crate::theme::Theme::info()), Span::raw(" - Re-run last query")]),
+      Line::from(""),
+      Line::from(vec![Span::styled("Copy Commands", crate::theme::Theme::header())]),
+      Line::from(vec![Span::styled("y", crate::theme::Theme::info()), Span::raw(" - Copy current cell/row")]),
+      Line::from(vec![Span::styled("Y", crate::theme::Theme::info()), Span::raw(" - Copy entire row as TSV")]),
+      Line::from(vec![Span::styled("Ctrl+y", crate::theme::Theme::info()), Span::raw(" - Copy row as JSON")]),
+      Line::from(""),
+      Line::from(vec![Span::styled("General", crate::theme::Theme::header())]),
+      Line::from(vec![Span::styled("?", crate::theme::Theme::info()), Span::raw(" - Show this help")]),
+      Line::from(vec![Span::styled("q", crate::theme::Theme::info()), Span::raw(" - Quit application")]),
+      Line::from(vec![Span::styled("ESC", crate::theme::Theme::info()), Span::raw(" - Exit current mode/close popup")]),
+    ];
 
-    // Check if line is already commented
-    let is_commented = trimmed.starts_with(comment_prefix);
-    let leading_whitespace = current_line.len() - trimmed.len();
+    let paragraph = Paragraph::new(help_text)
+      .block(block)
+      .style(crate::theme::Theme::bg_secondary())
+      .wrap(Wrap { trim: false })
+      .scroll((0, 0));
 
-    // Move to beginning of line
-    self.query_input.move_cursor(tui_textarea::CursorMove::Head);
+    f.render_widget(Clear, area);
+    f.render_widget(paragraph, area);
 
-    if is_commented {
-      // Uncomment: find and remove comment prefix
-      for _ in 0..leading_whitespace {
-        self.query_input.move_cursor(tui_textarea::CursorMove::Forward);
-      }
-      // Delete the comment prefix
-      for _ in 0..comment_prefix.len() {
-        self.query_input.delete_next_char();
-      }
-      // Remove space after comment if present
-      let current_lines = self.query_input.lines().to_vec();
-      if let Some(updated_line) = current_lines.get(cursor_row) {
-        if let Some(first_char) = updated_line.chars().nth(self.query_input.cursor().1) {
-          if first_char == ' ' {
-            self.query_input.delete_next_char();
-          }
-        }
-      }
-    } else {
-      // Comment: add comment prefix
-      for _ in 0..leading_whitespace {
-        self.query_input.move_cursor(tui_textarea::CursorMove::Forward);
-      }
-      // Insert comment prefix with space
-      for c in format!("{comment_prefix} ").chars() {
-        self.query_input.insert_char(c);
-      }
-    }
+    Ok(())
   }
 
   fn centered_rect(&self, percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -543,18 +1259,37 @@ impl<'a> Db<'a> {
   }
 }
 
-impl<'a> Component for Db<'a> {
+impl Component for Db {
   fn register_action_handler(&mut self, tx: UnboundedSender<Action>) -> Result<()> {
     self.command_tx = Some(tx);
     Ok(())
   }
 
   fn register_config_handler(&mut self, config: Config) -> Result<()> {
+    // Check if editor backend has changed
+    let current_backend_name = match &self.editor_backend {
+      EditorBackend::TuiTextarea(_) => "tui-textarea",
+      EditorBackend::Zep(_) => "zep",
+    };
+
+    if current_backend_name != config.editor.backend {
+      // Save current text before switching
+      let current_text = self.editor_backend.get_text();
+
+      // Switch to new backend
+      self.editor_backend = EditorBackend::new_from_config(&config.editor.backend);
+
+      // Restore text content
+      self.editor_backend.set_text(&current_text);
+    }
+
     self.config = config;
     Ok(())
   }
 
-  fn init(&mut self, _area: ratatui::layout::Rect) -> Result<()> {
+  fn init(&mut self, area: ratatui::layout::Rect) -> Result<()> {
+    // Initialize the editor backend
+    self.editor_backend.init(area)?;
     Ok(())
   }
 
@@ -567,6 +1302,49 @@ impl<'a> Component for Db<'a> {
   }
 
   fn handle_key_events(&mut self, key: KeyEvent) -> Result<Option<Action>> {
+    // Global navigation keys (work from any component except when editing text)
+    let is_editing = self.selected_component == ComponentKind::Query
+      && self.selected_tab == 0
+      && self.editor_backend.mode() == Mode::Insert;
+
+    // Global key handling for error dismissal and help (highest priority)
+    if let KeyCode::Esc = key.code {
+      if self.error_message.is_some() {
+        self.error_message = None;
+        return Ok(None);
+      }
+      if self.show_help {
+        self.show_help = false;
+        return Ok(None);
+      }
+    }
+
+    // Show help overlay
+    if let KeyCode::Char('?') = key.code {
+      if !is_editing && !self.is_searching_tables && !self.is_searching_results {
+        self.show_help = !self.show_help;
+        return Ok(None);
+      }
+    }
+
+    if !is_editing && !self.is_searching_tables {
+      match key.code {
+        KeyCode::Char('1') => {
+          self.selected_component = ComponentKind::Home;
+          return Ok(Some(Action::SelectComponent(ComponentKind::Home)));
+        },
+        KeyCode::Char('2') => {
+          self.selected_component = ComponentKind::Query;
+          return Ok(Some(Action::SelectComponent(ComponentKind::Query)));
+        },
+        KeyCode::Char('3') => {
+          self.selected_component = ComponentKind::Results;
+          return Ok(Some(Action::SelectComponent(ComponentKind::Results)));
+        },
+        _ => {},
+      }
+    }
+
     match self.selected_component {
       ComponentKind::Home => {
         // Searching for a table
@@ -574,9 +1352,8 @@ impl<'a> Component for Db<'a> {
           KeyCode::Char(c) => {
             if c == '/' {
               self.is_searching_tables = true;
-            }
-
-            if self.is_searching_tables && c != '/' {
+            } else if self.is_searching_tables && c != '/' && !"123".contains(c) {
+              // Allow typing search but prevent global navigation keys during search
               self.table_search_query.push(c);
               return Ok(Some(Action::LoadTables(self.table_search_query.clone())));
             }
@@ -587,77 +1364,94 @@ impl<'a> Component for Db<'a> {
             }
           },
           KeyCode::Backspace => {
-            self.table_search_query.pop();
+            if self.is_searching_tables {
+              self.table_search_query.pop();
+              return Ok(Some(Action::LoadTables(self.table_search_query.clone())));
+            }
           },
           KeyCode::Esc => {
-            self.table_search_query.clear();
-            if !self.is_searching_tables {
-              return Ok(Some(Action::LoadTables(String::new())));
-            } else {
+            if self.is_searching_tables {
+              // Clear search and exit search mode
+              self.table_search_query.clear();
               self.is_searching_tables = false;
+              return Ok(Some(Action::LoadTables(String::new())));
             }
           },
           _ => {},
         }
       },
       ComponentKind::Query => {
-        // Handle tab switching first (works in all modes)
-        match key.code {
-          KeyCode::Char('Q') if key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) => {
-            self.selected_tab = 0; // Switch to Query tab
-            return Ok(None);
-          },
-          KeyCode::Char('H') if key.modifiers.contains(KeyModifiers::CONTROL) && key.modifiers.contains(KeyModifiers::SHIFT) => {
-            self.selected_tab = 1; // Switch to History tab
-            return Ok(None);
-          },
-          KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
-            self.selected_tab = if self.selected_tab > 0 { self.selected_tab - 1 } else { 1 };
-            return Ok(None);
-          },
-          KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
-            self.selected_tab = if self.selected_tab < 1 { self.selected_tab + 1 } else { 0 };
-            return Ok(None);
-          },
-          _ => {}
+        // Handle tab switching first (works in all modes except insert mode)
+        if self.editor_backend.mode() != Mode::Insert {
+          match key.code {
+            KeyCode::Char('t') => {
+              // Toggle between Query (0) and History (1) tabs
+              self.selected_tab = if self.selected_tab == 0 { 1 } else { 0 };
+              return Ok(None);
+            },
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+              self.selected_tab = if self.selected_tab > 0 { self.selected_tab - 1 } else { 1 };
+              return Ok(None);
+            },
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+              self.selected_tab = if self.selected_tab < 1 { self.selected_tab + 1 } else { 0 };
+              return Ok(None);
+            },
+            _ => {},
+          }
         }
 
         // Handle history tab navigation
         if self.selected_tab == 1 {
           match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
-              if self.selected_history_index > 0 {
-                self.selected_history_index -= 1;
+              // Move up in display (toward more recent) = decrease index in reversed list
+              if !self.query_history.is_empty() {
+                if self.selected_history_index > 0 {
+                  self.selected_history_index -= 1;
+                } else {
+                  self.selected_history_index = self.query_history.len() - 1; // Wrap to bottom
+                }
               }
               return Ok(None);
             },
             KeyCode::Down | KeyCode::Char('j') => {
-              if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() - 1 {
-                self.selected_history_index += 1;
+              // Move down in display (toward older) = increase index in reversed list
+              if !self.query_history.is_empty() {
+                if self.selected_history_index < self.query_history.len() - 1 {
+                  self.selected_history_index += 1;
+                } else {
+                  self.selected_history_index = 0; // Wrap to top
+                }
               }
               return Ok(None);
             },
             KeyCode::Enter => {
               // Execute selected history item
-              if let Some(entry) = self.query_history.get(self.query_history.len().saturating_sub(1).saturating_sub(self.selected_history_index)) {
-                return Ok(Some(Action::HandleQuery(entry.query.clone())));
+              // Convert display index to actual array index (most recent = index 0 in display)
+              if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() {
+                let actual_index = self.query_history.len() - 1 - self.selected_history_index;
+                if let Some(entry) = self.query_history.get(actual_index) {
+                  return Ok(Some(Action::HandleQuery(entry.query.clone())));
+                }
               }
               return Ok(None);
             },
             KeyCode::Char('c') => {
               // Copy selected history item to query editor
-              if let Some(entry) = self.query_history.get(self.query_history.len().saturating_sub(1).saturating_sub(self.selected_history_index)) {
-                self.query_input.select_all();
-                self.query_input.cut();
-                self.query_input.insert_str(&entry.query);
-                self.selected_tab = 0; // Switch back to query tab
+              if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() {
+                let actual_index = self.query_history.len() - 1 - self.selected_history_index;
+                if let Some(entry) = self.query_history.get(actual_index) {
+                  self.editor_backend.set_text(&entry.query);
+                  self.selected_tab = 0; // Switch back to query tab
+                }
               }
               return Ok(None);
             },
             KeyCode::Char('d') => {
               // Delete selected history item
-              if !self.query_history.is_empty() {
-                let actual_index = self.query_history.len().saturating_sub(1).saturating_sub(self.selected_history_index);
+              if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() {
+                let actual_index = self.query_history.len() - 1 - self.selected_history_index;
                 self.query_history.remove(actual_index);
                 self.save_query_history();
                 // Adjust selection if needed
@@ -673,117 +1467,67 @@ impl<'a> Component for Db<'a> {
 
         // Handle query editor (only when on Query tab)
         if self.selected_tab == 0 {
-          // Handle different modes differently
-          match self.vim_editor.mode() {
-            Mode::Insert => {
-              // In insert mode, most keys go directly to textarea except Esc and Ctrl+Enter
-              match key.code {
-                KeyCode::Esc => {
-                  self.vim_editor = Vim::new(Mode::Normal);
-                  self.query_input.set_cursor_style(Mode::Normal.cursor_style());
-                },
-                _ => {
-                  // Pass all other keys to textarea for normal text input
-                  let input = Input::from(key);
-                  self.query_input.input(input);
-                },
-              }
-            },
-            _ => {
-              // In Normal/Visual/Operator modes, handle VIM commands
-              let input = Input::from(key);
-
-              // Handle 'g' operator mode for gcc commenting
-              if self.vim_editor.mode() == Mode::Operator('g') && key.code == KeyCode::Char('c') {
-                self.toggle_comment_on_textarea();
-                self.vim_editor = Vim::new(Mode::Normal);
-                self.query_input.set_cursor_style(Mode::Normal.cursor_style());
+          // Handle autocomplete navigation first
+          if self.autocomplete_state.is_active {
+            match key.code {
+              KeyCode::Tab | KeyCode::Down => {
+                self.autocomplete_state.select_next();
                 return Ok(None);
-              }
-
-              // Apply VIM operations directly to query_input textarea
-              match key.code {
-                // Handle visual mode
-                KeyCode::Char('v') if self.vim_editor.mode() == Mode::Normal => {
-                self.query_input.start_selection();
-                self.vim_editor = Vim::new(Mode::Visual);
-                self.query_input.set_cursor_style(Mode::Visual.cursor_style());
               },
-                KeyCode::Char('V') if self.vim_editor.mode() == Mode::Normal => {
-                  self.query_input.move_cursor(tui_textarea::CursorMove::Head);
-                  self.query_input.start_selection();
-                  self.query_input.move_cursor(tui_textarea::CursorMove::End);
-                  self.vim_editor = Vim::new(Mode::Visual);
-                  self.query_input.set_cursor_style(Mode::Visual.cursor_style());
-                },
-                KeyCode::Esc | KeyCode::Char('v') if self.vim_editor.mode() == Mode::Visual => {
-                  self.query_input.cancel_selection();
-                  self.vim_editor = Vim::new(Mode::Normal);
-                  self.query_input.set_cursor_style(Mode::Normal.cursor_style());
-                },
-                // Handle movement commands
-                KeyCode::Char('h') => self.query_input.move_cursor(tui_textarea::CursorMove::Back),
-                KeyCode::Char('j') => self.query_input.move_cursor(tui_textarea::CursorMove::Down),
-                KeyCode::Char('k') => self.query_input.move_cursor(tui_textarea::CursorMove::Up),
-                KeyCode::Char('l') => self.query_input.move_cursor(tui_textarea::CursorMove::Forward),
-                KeyCode::Char('w') => self.query_input.move_cursor(tui_textarea::CursorMove::WordForward),
-                KeyCode::Char('b') => self.query_input.move_cursor(tui_textarea::CursorMove::WordBack),
-                KeyCode::Char('^') => self.query_input.move_cursor(tui_textarea::CursorMove::Head),
-                KeyCode::Char('0') => self.query_input.move_cursor(tui_textarea::CursorMove::Head),
-                KeyCode::Char('$') => self.query_input.move_cursor(tui_textarea::CursorMove::End),
-                // Handle edit commands
-                KeyCode::Char('x') => {
-                  self.query_input.delete_next_char();
-                },
-                KeyCode::Char('p') => {
-                  self.query_input.paste();
-                },
-                KeyCode::Char('u') => {
-                  self.query_input.undo();
-                },
-                // Handle 'g' for operator mode
-                KeyCode::Char('g') if self.vim_editor.mode() == Mode::Normal => {
-                  self.vim_editor = Vim::new(Mode::Operator('g'));
-                  self.query_input.set_cursor_style(Mode::Operator('g').cursor_style());
-                },
-                // Handle mode transitions
-                KeyCode::Char('i') if self.vim_editor.mode() == Mode::Normal => {
-                  self.vim_editor = Vim::new(Mode::Insert);
-                  self.query_input.set_cursor_style(Mode::Insert.cursor_style());
-                },
-                KeyCode::Char('a') if self.vim_editor.mode() == Mode::Normal => {
-                  self.query_input.move_cursor(tui_textarea::CursorMove::Forward);
-                  self.vim_editor = Vim::new(Mode::Insert);
-                  self.query_input.set_cursor_style(Mode::Insert.cursor_style());
-                },
-                KeyCode::Char('A') if self.vim_editor.mode() == Mode::Normal => {
-                  self.query_input.move_cursor(tui_textarea::CursorMove::End);
-                  self.vim_editor = Vim::new(Mode::Insert);
-                  self.query_input.set_cursor_style(Mode::Insert.cursor_style());
-                },
-                KeyCode::Char('o') if self.vim_editor.mode() == Mode::Normal => {
-                  self.query_input.move_cursor(tui_textarea::CursorMove::End);
-                  self.query_input.insert_newline();
-                  self.vim_editor = Vim::new(Mode::Insert);
-                  self.query_input.set_cursor_style(Mode::Insert.cursor_style());
-                },
-                KeyCode::Char('O') if self.vim_editor.mode() == Mode::Normal => {
-                  self.query_input.move_cursor(tui_textarea::CursorMove::Head);
-                  self.query_input.insert_newline();
-                  self.query_input.move_cursor(tui_textarea::CursorMove::Up);
-                  self.vim_editor = Vim::new(Mode::Insert);
-                  self.query_input.set_cursor_style(Mode::Insert.cursor_style());
-                },
-                // Handle query execution
-                KeyCode::Enter if self.vim_editor.mode() == Mode::Normal => {
-                  let query_text = self.query_input.lines().join(" ");
-                  let trimmed_query = query_text.trim();
-                  if !trimmed_query.is_empty() {
-                    return Ok(Some(Action::HandleQuery(trimmed_query.to_string())));
+              KeyCode::BackTab | KeyCode::Up => {
+                self.autocomplete_state.select_previous();
+                return Ok(None);
+              },
+              KeyCode::Enter => {
+                // Only apply suggestion if we have valid suggestions and user is in insert mode
+                if self.editor_backend.mode() == Mode::Insert
+                  && !self.autocomplete_state.suggestions.is_empty()
+                  && self.autocomplete_state.selected_index < self.autocomplete_state.suggestions.len()
+                {
+                  if let Some(suggestion) = self.autocomplete_state.get_selected_suggestion() {
+                    self.apply_autocomplete_suggestion(suggestion.clone());
+                    self.autocomplete_state.deactivate();
+                    return Ok(None);
                   }
-                },
-                _ => {},
-              }
+                }
+                // Otherwise, deactivate autocomplete and let Enter work normally
+                self.autocomplete_state.deactivate();
+              },
+              KeyCode::Esc => {
+                self.autocomplete_state.deactivate();
+                return Ok(None);
+              },
+              _ => {
+                // For other keys in insert mode, continue normal processing
+                // but deactivate autocomplete to avoid interference
+                if self.editor_backend.mode() == Mode::Insert {
+                  self.autocomplete_state.deactivate();
+                }
+              },
+            }
+          }
+
+          // Handle manual autocomplete trigger (Ctrl+Space)
+          if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if self.editor_backend.mode() == Mode::Insert {
+              self.trigger_autocomplete();
+              return Ok(None);
+            }
+          }
+
+          // Delegate key handling to the editor backend
+          if let Ok(action) = self.editor_backend.handle_key_event(key) {
+            if let Some(action) = action {
+              return Ok(Some(action));
+            }
+          }
+
+          // Handle query execution for Enter key in normal mode
+          if key.code == KeyCode::Enter && self.editor_backend.mode() == Mode::Normal {
+            let query_text = self.editor_backend.get_text();
+            let trimmed_query = query_text.trim();
+            if !trimmed_query.is_empty() {
+              return Ok(Some(Action::HandleQuery(trimmed_query.to_string())));
             }
           }
         }
@@ -795,18 +1539,148 @@ impl<'a> Component for Db<'a> {
         }
       },
       ComponentKind::Results => {
+        // Handle search mode first
+        if self.is_searching_results {
+          match key.code {
+            KeyCode::Esc => {
+              // Exit search mode and clear search
+              self.is_searching_results = false;
+              self.results_search_query.clear();
+              self.filter_results_fuzzy();
+              return Ok(None);
+            },
+            KeyCode::Enter => {
+              // Confirm search (stay in filtered view)
+              self.is_searching_results = false;
+              return Ok(None);
+            },
+            KeyCode::Backspace => {
+              // Delete character from search query
+              self.results_search_query.pop();
+              self.filter_results_fuzzy();
+              return Ok(None);
+            },
+            KeyCode::Char(c) => {
+              // Add character to search query
+              self.results_search_query.push(c);
+              self.filter_results_fuzzy();
+              return Ok(None);
+            },
+            _ => return Ok(None),
+          }
+        }
+
+        // Handle cell selection mode navigation first
+        if self.selection_mode == SelectionMode::Cell {
+          // Handle all keys in cell selection mode to prevent them from triggering other actions
+          match key.code {
+            KeyCode::Left | KeyCode::Char('h') => {
+              if self.selected_cell_index > 0 {
+                self.selected_cell_index -= 1;
+                // Auto-scroll if needed
+                let cell_page = self.selected_cell_index / VISIBLE_COLUMNS;
+                if cell_page < self.horizonal_scroll_offset {
+                  self.horizonal_scroll_offset = cell_page;
+                }
+              }
+              return Ok(Some(Action::Render)); // Force render but consume the key
+            },
+            KeyCode::Right | KeyCode::Char('l') => {
+              if let Some(row) = self.get_selected_row() {
+                if self.selected_cell_index < row.len() - 1 {
+                  self.selected_cell_index += 1;
+                  // Auto-scroll if needed
+                  let cell_page = self.selected_cell_index / VISIBLE_COLUMNS;
+                  if cell_page > self.horizonal_scroll_offset {
+                    self.horizonal_scroll_offset = cell_page;
+                  }
+                }
+              }
+              return Ok(Some(Action::Render)); // Force render but consume the key
+            },
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') => {
+              // Allow these to be handled by the normal row navigation
+              // Don't return here, let them fall through
+            },
+            KeyCode::Esc => {
+              // Exit cell selection mode
+              self.selection_mode = SelectionMode::Table;
+              return Ok(Some(Action::Render));
+            },
+            KeyCode::Char('y') => {
+              // Copy in cell mode
+              if let Some(content) = self.get_copy_content(false, false) {
+                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+                ctx.set_contents(content).unwrap();
+              }
+              return Ok(None);
+            },
+            _ => {
+              // Consume all other keys in cell selection mode
+              return Ok(None);
+            },
+          }
+        }
+
+        // Normal results mode key handling
         match key.code {
-          KeyCode::Char('y') => {
-            if let Some(json_str) = self.json() {
+          KeyCode::Char('/') => {
+            // Enter search mode
+            self.is_searching_results = true;
+            self.results_search_query.clear();
+            self.filter_results_fuzzy(); // Initialize with all results
+            return Ok(None);
+          },
+          KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Copy as JSON
+            if let Some(content) = self.get_copy_content(true, true) {
               let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-              ctx.set_contents(json_str).unwrap();
+              ctx.set_contents(content).unwrap();
+            }
+          },
+          KeyCode::Char('y') => {
+            // Copy current cell or row based on selection mode
+            if let Some(content) = self.get_copy_content(false, false) {
+              let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+              ctx.set_contents(content).unwrap();
+            }
+          },
+          KeyCode::Char('Y') => {
+            // Copy entire row as TSV
+            if let Some(content) = self.get_copy_content(true, false) {
+              let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+              ctx.set_contents(content).unwrap();
             }
           },
           KeyCode::Char('r') => {
-            return Ok(Some(Action::HandleQuery(self.query_input.lines().join(" "))));
+            return Ok(Some(Action::HandleQuery(self.editor_backend.get_text())));
           },
           KeyCode::Char(' ') => {
-            self.row_is_selected = !self.row_is_selected;
+            self.selection_mode = match self.selection_mode {
+              SelectionMode::Table => SelectionMode::Row,
+              SelectionMode::Row => SelectionMode::Table,
+              _ => SelectionMode::Table,
+            };
+          },
+          KeyCode::Char('p') => {
+            // Toggle preview popup
+            self.selection_mode = match self.selection_mode {
+              SelectionMode::Preview => SelectionMode::Table,
+              _ => SelectionMode::Preview,
+            };
+          },
+          KeyCode::Char('v') => {
+            // Enter cell selection mode
+            self.selection_mode = SelectionMode::Cell;
+            // Start at the first visible column
+            self.selected_cell_index = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
+          },
+          KeyCode::Esc => {
+            // Exit any special selection mode
+            if self.selection_mode != SelectionMode::Table {
+              self.selection_mode = SelectionMode::Table;
+              return Ok(None);
+            }
           },
           _ => {},
         }
@@ -821,64 +1695,135 @@ impl<'a> Component for Db<'a> {
       Action::TablesLoaded(tables) => {
         let tables = tables.iter().filter(|t| t.schema == "public").cloned().collect();
         self.tables = tables;
-      },
-      Action::TableMoveDown => {
-        if self.selected_table_index < self.table_row_count() {
-          self.selected_table_index += 1;
+
+        // Update autocomplete provider with all tables
+        self.autocomplete_provider.update_tables(self.tables.clone());
+
+        // Reset table selection index to prevent out-of-bounds access after filtering
+        if !self.tables.is_empty() {
+          self.selected_table_index = self.selected_table_index.min(self.tables.len() - 1);
         } else {
           self.selected_table_index = 0;
         }
       },
+      Action::TableMoveDown => {
+        if !self.tables.is_empty() {
+          if self.selected_table_index < self.tables.len() - 1 {
+            self.selected_table_index += 1;
+          } else {
+            self.selected_table_index = 0; // Wrap to top
+          }
+        }
+      },
       Action::TableMoveUp => {
-        if self.selected_table_index > 0 {
-          self.selected_table_index -= 1;
-        } else {
-          self.selected_table_index =
-            (self.table_row_count() as i32 - 1i32).clamp(0, self.table_row_count() as i32 - 1) as usize;
-        }
-      },
-      Action::ScrollTableLeft => {
-        if self.selected_component == ComponentKind::Results && self.horizonal_scroll_offset > 0 {
-          self.horizonal_scroll_offset -= 1;
-        }
-      },
-      Action::ScrollTableRight => {
-        if self.selected_component == ComponentKind::Results
-          && self.column_count() > 0
-          && self.horizonal_scroll_offset * VISIBLE_COLUMNS < self.column_count() - VISIBLE_COLUMNS
-        {
-          self.horizonal_scroll_offset += 1;
+        if !self.tables.is_empty() {
+          if self.selected_table_index > 0 {
+            self.selected_table_index -= 1;
+          } else {
+            self.selected_table_index = self.tables.len() - 1; // Wrap to bottom
+          }
         }
       },
       Action::RowMoveDown => {
-        if !self.query_results.is_empty() {
-          if self.selected_component == ComponentKind::Results
-            && !self.row_is_selected
-            && self.selected_row_index < self.query_results.len() - 1
-          {
-            self.selected_row_index += 1;
-          } else if self.selected_component == ComponentKind::Results
-            && self.row_is_selected
-            && self.detail_row_index < self.query_results[self.selected_row_index].len() - 1
-          {
-            self.detail_row_index += 1;
+        if !self.query_results.is_empty() && self.selected_component == ComponentKind::Results {
+          match self.selection_mode {
+            SelectionMode::Table => {
+              // Navigate through filtered result rows
+              if !self.filtered_results.is_empty() {
+                if self.filtered_results_index < self.filtered_results.len() - 1 {
+                  self.filtered_results_index += 1;
+                } else {
+                  self.filtered_results_index = 0; // Wrap to top
+                }
+                // Update the actual selected row index
+                self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+              }
+            },
+            SelectionMode::Cell => {
+              // Move to next row in cell selection mode
+              if !self.filtered_results.is_empty() {
+                if self.filtered_results_index < self.filtered_results.len() - 1 {
+                  self.filtered_results_index += 1;
+                  self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+                }
+              } else if self.selected_row_index < self.query_results.len() - 1 {
+                self.selected_row_index += 1;
+              }
+            },
+            SelectionMode::Row => {
+              // Navigate through detail columns
+              if self.detail_row_index < self.query_results[self.selected_row_index].len() - 1 {
+                self.detail_row_index += 1;
+              } else {
+                self.detail_row_index = 0; // Wrap to top
+              }
+            },
+            _ => {},
           }
         }
       },
       Action::RowMoveUp => {
-        if self.selected_component == ComponentKind::Results && self.selected_row_index > 0 && !self.row_is_selected {
-          self.selected_row_index -= 1;
-        } else if self.selected_component == ComponentKind::Results && self.row_is_selected && self.detail_row_index > 0
-        {
-          self.detail_row_index -= 1;
+        if !self.query_results.is_empty() && self.selected_component == ComponentKind::Results {
+          match self.selection_mode {
+            SelectionMode::Table => {
+              // Navigate through filtered result rows
+              if !self.filtered_results.is_empty() {
+                if self.filtered_results_index > 0 {
+                  self.filtered_results_index -= 1;
+                } else {
+                  self.filtered_results_index = self.filtered_results.len() - 1;
+                  // Wrap to bottom
+                }
+                // Update the actual selected row index
+                self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+              }
+            },
+            SelectionMode::Cell => {
+              // Move to previous row in cell selection mode
+              if !self.filtered_results.is_empty() {
+                if self.filtered_results_index > 0 {
+                  self.filtered_results_index -= 1;
+                  self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+                }
+              } else if self.selected_row_index > 0 {
+                self.selected_row_index -= 1;
+              }
+            },
+            SelectionMode::Row => {
+              // Navigate through detail columns
+              if self.detail_row_index > 0 {
+                self.detail_row_index -= 1;
+              } else {
+                self.detail_row_index = self.query_results[self.selected_row_index].len() - 1;
+                // Wrap to bottom
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      Action::ScrollTableLeft => {
+        if self.selected_component == ComponentKind::Results && self.selection_mode != SelectionMode::Cell {
+          // Normal horizontal scrolling (not in cell selection mode)
+          if self.horizonal_scroll_offset > 0 {
+            self.horizonal_scroll_offset -= 1;
+          }
+        }
+      },
+      Action::ScrollTableRight => {
+        if self.selected_component == ComponentKind::Results && self.selection_mode != SelectionMode::Cell {
+          // Normal horizontal scrolling (not in cell selection mode)
+          if self.column_count() > 0
+            && self.horizonal_scroll_offset * VISIBLE_COLUMNS < self.column_count() - VISIBLE_COLUMNS
+          {
+            self.horizonal_scroll_offset += 1;
+          }
         }
       },
       Action::LoadSelectedTable => {
         if let Some(selected_table) = self.tables.get(self.selected_table_index) {
           let query = format!("SELECT * FROM {}", selected_table.name);
-          self.query_input.select_all();
-          self.query_input.cut();
-          self.query_input.insert_str(&query);
+          self.editor_backend.set_text(&query);
           return Ok(Some(Action::HandleQuery(query)));
         } else {
           return Ok(None);
@@ -890,12 +1835,20 @@ impl<'a> Component for Db<'a> {
         self.horizonal_scroll_offset = 0;
         self.selected_row_index = 0;
         self.detail_row_index = 0;
-        
+
+        // Reset search state
+        self.is_searching_results = false;
+        self.results_search_query.clear();
+        self.filtered_results_index = 0;
+
+        // Initialize filtered results with all rows
+        self.filter_results_fuzzy();
+
         // Add successful query to history
         if let Some(query) = self.last_executed_query.take() {
           self.add_to_history(&query, true);
         }
-        
+
         // Don't automatically switch focus to results - stay in current component
       },
       Action::FocusQuery => {
@@ -911,73 +1864,15 @@ impl<'a> Component for Db<'a> {
         return Ok(Some(Action::SelectComponent(ComponentKind::Home)));
       },
       Action::ExecuteQuery => {
-        // Execute selected text or full query if no selection (Ctrl+Y via keybinding)
-        let query_text = if self.query_input.is_selecting() {
-          // Get actual selected text by using the selection range
-          let selection = self.query_input.selection_range();
-          
-          if let Some((start, end)) = selection {
-            // Calculate selected text manually from the lines
-            let lines = self.query_input.lines();
-            let all_text = lines.join("\n");
-            
-            // Convert line-based positions to character positions
-            let mut char_pos = 0;
-            let mut start_char_pos = None;
-            let mut end_char_pos = None;
-            
-            for (line_idx, line) in lines.iter().enumerate() {
-              if line_idx == start.0 {
-                start_char_pos = Some(char_pos + start.1);
-              }
-              if line_idx == end.0 {
-                end_char_pos = Some(char_pos + end.1);
-                break;
-              }
-              char_pos += line.len() + 1; // +1 for newline
-            }
-            
-            if let (Some(start_pos), Some(end_pos)) = (start_char_pos, end_char_pos) {
-              let selected_text = if start_pos <= end_pos {
-                all_text.chars().skip(start_pos).take(end_pos - start_pos).collect::<String>()
-              } else {
-                all_text.chars().skip(end_pos).take(start_pos - end_pos).collect::<String>()
-              };
-              
-              if selected_text.trim().is_empty() {
-                self.query_input.lines().join(" ")
-              } else {
-                // Clean up selected text
-                selected_text.lines()
-                  .map(|line| line.trim())
-                  .filter(|line| !line.is_empty())
-                  .collect::<Vec<_>>()
-                  .join(" ")
-              }
-            } else {
-              // Fallback to yank if position calculation fails
-              let selected = self.query_input.yank_text();
-              if selected.trim().is_empty() {
-                self.query_input.lines().join(" ")
-              } else {
-                selected
-              }
-            }
-          } else {
-            // Fallback to yank if no selection range
-            let selected = self.query_input.yank_text();
-            if selected.trim().is_empty() {
-              self.query_input.lines().join(" ")
-            } else {
-              selected
-            }
-          }
+        // Execute query text from editor backend
+        let query_text = if let Some(selected_text) = self.editor_backend.get_selected_text() {
+          selected_text.trim().to_string()
         } else {
-          self.query_input.lines().join(" ")
+          self.editor_backend.get_text()
         };
 
         let cleaned_query = query_text.trim();
-        
+
         // Only execute if query is not empty
         if !cleaned_query.is_empty() {
           // Store the query for history tracking
@@ -990,29 +1885,39 @@ impl<'a> Component for Db<'a> {
       },
       Action::Error(e) => {
         self.error_message = Some(e);
-        
+
         // Add failed query to history (but don't save failed queries)
-        if let Some(query) = self.last_executed_query.take() {
+        if let Some(_query) = self.last_executed_query.take() {
           // We could optionally add failed queries with success=false
           // For now, we only add successful queries to history
           // self.add_to_history(&query, false);
         }
+      },
+      Action::ClearQuery => {
+        // Clear the query editor
+        self.editor_backend.set_text("");
       },
       _ => {},
     }
     Ok(None)
   }
 
-  fn draw(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+  fn draw(&mut self, f: &mut Frame<'_>, _area: Rect) -> Result<()> {
     // Create the layout sections.
     let chunks = Layout::default()
       .direction(Direction::Vertical)
       .constraints([Constraint::Length(3), Constraint::Min(1)])
       .split(f.area());
 
-    let title_block = Block::default().borders(Borders::ALL).style(Style::default());
+    let title_block = Block::default()
+      .borders(Borders::ALL)
+      .border_style(crate::theme::Theme::border_normal())
+      .border_type(BorderType::Rounded)
+      .style(crate::theme::Theme::bg_primary());
 
-    let title = Paragraph::new(Text::styled("Query Crafter", Style::default().fg(Color::Green))).block(title_block);
+    let title =
+      Paragraph::new(Text::styled("Query Crafter - [1] Tables [2] Query [3] Results", crate::theme::Theme::title()))
+        .block(title_block);
 
     f.render_widget(title, chunks[0]);
 
@@ -1023,6 +1928,68 @@ impl<'a> Component for Db<'a> {
     self.render_query_results(f, query_chunks)?;
 
     self.render_error(f)?;
+
+    self.render_help(f)?;
+
+    Ok(())
+  }
+}
+
+// Additional impl block for autocomplete functionality
+impl Db {
+  /// Manually triggers autocomplete at the current cursor position
+  fn trigger_autocomplete(&mut self) {
+    // Get text up to cursor position for context analysis
+    let text_up_to_cursor = self.editor_backend.get_text_up_to_cursor();
+    let cursor_pos = text_up_to_cursor.len();
+
+    // Use the SQL parser to analyze context
+    let (context, current_word) = crate::autocomplete::SqlParser::analyze_context(&text_up_to_cursor, cursor_pos);
+
+    // Always show suggestions when manually triggered, even for empty current word
+    self.autocomplete_state.activate(cursor_pos, current_word.clone());
+    let suggestions = self.autocomplete_provider.get_suggestions(context, &current_word);
+    self.autocomplete_state.update_suggestions(suggestions);
+  }
+
+  /// Applies the selected autocomplete suggestion to the editor
+  fn apply_autocomplete_suggestion(&mut self, suggestion: crate::autocomplete::SuggestionItem) {
+    // Delete the current partial word before cursor
+    if !self.autocomplete_state.current_word.is_empty() {
+      self.editor_backend.delete_word_before_cursor();
+    }
+
+    // Insert the suggestion at the cursor position
+    self.editor_backend.insert_text_at_cursor(&suggestion.text);
+  }
+
+  /// Renders the autocomplete popup widget
+  fn render_autocomplete_popup(&mut self, f: &mut Frame<'_>, editor_area: Rect) -> Result<()> {
+    if !self.autocomplete_state.is_active || self.autocomplete_state.suggestions.is_empty() {
+      return Ok(());
+    }
+
+    // Create a popup positioned near the cursor (simplified positioning)
+    let popup_height = std::cmp::min(10, self.autocomplete_state.suggestions.len() as u16 + 2);
+    let popup_width = 40;
+
+    // Position popup in the lower part of the editor area
+    let popup_area = Rect {
+      x: editor_area.x + 2,
+      y: editor_area.y + editor_area.height.saturating_sub(popup_height + 1),
+      width: std::cmp::min(popup_width, editor_area.width.saturating_sub(4)),
+      height: popup_height,
+    };
+
+    // Clear the area first
+    f.render_widget(Clear, popup_area);
+
+    // Use the autocomplete popup widget
+    let autocomplete_popup = crate::autocomplete_widget::AutocompletePopup::new(&self.autocomplete_state)
+      .max_height(popup_height.saturating_sub(2))
+      .max_width(popup_width);
+
+    f.render_widget(autocomplete_popup, popup_area);
 
     Ok(())
   }

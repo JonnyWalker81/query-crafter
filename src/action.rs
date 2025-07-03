@@ -1,9 +1,4 @@
-use std::{fmt, string::ToString};
-
-use serde::{
-  de::{self, Deserializer, Visitor},
-  Deserialize, Serialize,
-};
+use serde::{Deserialize, Serialize};
 use strum::Display;
 
 use crate::components::{db::DbTable, ComponentKind};
@@ -38,4 +33,5 @@ pub enum Action {
   HandleQuery(String),
   RowDetails,
   SwitchEditor,
+  ClearQuery,
 }

@@ -2,20 +2,14 @@ use async_trait::async_trait;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-  backend::Backend,
   layout::Rect,
   style::{Modifier, Style},
   text::{Line, Span},
   widgets::{Block, Borders, Paragraph},
-  Frame,
 };
 use ropey::{Rope, RopeSlice};
 
-use crate::{
-  action::Action,
-  editor_common::{Mode, Transition},
-  editor_component::EditorComponent,
-};
+use crate::{action::Action, editor_common::Mode, editor_component::EditorComponent};
 
 pub struct CustomVimEditor {
   mode: Mode,
@@ -252,6 +246,15 @@ impl EditorComponent for CustomVimEditor {
 
   fn get_text(&self) -> String {
     self.content.to_string()
+  }
+
+  fn get_selected_text(&self) -> Option<String> {
+    if let Some((start, end)) = self.selection {
+      let slice: RopeSlice = self.content.slice(start..end);
+      Some(slice.to_string())
+    } else {
+      None
+    }
   }
 
   fn set_text(&mut self, text: &str) {

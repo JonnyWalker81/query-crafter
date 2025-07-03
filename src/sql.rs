@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-use color_eyre::eyre::{self, anyhow, Result};
+use color_eyre::eyre::{self, Result};
 use futures::StreamExt;
 use sqlx::{
   postgres::{PgColumn, PgPoolOptions, PgRow},
@@ -10,11 +10,16 @@ use sqlx::{
 };
 use tokio_stream::StreamExt as OtherStream;
 
-use crate::{action::Action, app::dispatch, components::db::DbTable};
+use crate::{
+  action::Action,
+  app::dispatch,
+  components::db::{DbColumn, DbTable},
+};
 
 #[async_trait]
 pub trait Queryer: Send + Sync {
   async fn load_tables(&self, tx: tokio::sync::mpsc::UnboundedSender<Action>, search: &str) -> Result<()>;
+  async fn load_table_columns(&self, table_name: &str, schema: &str) -> Result<Vec<DbColumn>>;
   async fn query(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()>;
 }
 
@@ -46,17 +51,41 @@ impl Queryer for Sqlite {
     let mut tables: Vec<DbTable> = rows
       .into_iter()
       .filter_map(|row| {
-        row.try_get::<String, _>("name").ok().map(|name| DbTable { name, schema: "public".to_string() })
+        row
+          .try_get::<String, _>("name")
+          .ok()
+          .map(|name| DbTable { name, schema: "public".to_string(), columns: Vec::new() })
       })
       .collect();
 
     tables.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let filtered_tables =
-      if search.is_empty() { tables } else { tables.into_iter().filter(|t| t.name.contains(search)).collect() };
+    let filtered_tables = if search.is_empty() {
+      tables
+    } else {
+      tables.into_iter().filter(|t| t.name.to_lowercase().contains(&search.to_lowercase())).collect()
+    };
 
     dispatch(tx, Action::TablesLoaded(filtered_tables)).await?;
     Ok(())
+  }
+
+  async fn load_table_columns(&self, table_name: &str, _schema: &str) -> Result<Vec<DbColumn>> {
+    let pragma_query = format!("PRAGMA table_info({})", table_name);
+    let rows = sqlx::query(&pragma_query).fetch_all(&self.conn).await?;
+
+    let columns: Vec<DbColumn> = rows
+      .into_iter()
+      .filter_map(|row| {
+        let name = row.try_get::<String, _>("name").ok()?;
+        let type_str = row.try_get::<String, _>("type").ok()?;
+        let not_null = row.try_get::<i32, _>("notnull").ok()?;
+        let is_nullable = not_null == 0; // SQLite uses 0 for nullable, 1 for not null
+        Some(DbColumn { name, data_type: type_str, is_nullable })
+      })
+      .collect();
+
+    Ok(columns)
   }
 
   async fn query(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
@@ -118,17 +147,47 @@ impl Queryer for Postgres {
       .filter_map(|row| {
         let name = row.try_get::<String, _>("table_name").ok()?;
         let schema = row.try_get::<String, _>("table_schema").ok()?;
-        Some(DbTable { name, schema })
+        Some(DbTable { name, schema, columns: Vec::new() })
       })
       .collect();
 
     tables.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let filtered_tables =
-      if search.is_empty() { tables } else { tables.into_iter().filter(|t| t.name.contains(search)).collect() };
+    let filtered_tables = if search.is_empty() {
+      tables
+    } else {
+      tables.into_iter().filter(|t| t.name.to_lowercase().contains(&search.to_lowercase())).collect()
+    };
 
     dispatch(tx, Action::TablesLoaded(filtered_tables)).await?;
     Ok(())
+  }
+
+  async fn load_table_columns(&self, table_name: &str, schema: &str) -> Result<Vec<DbColumn>> {
+    let rows = sqlx::query(
+      "SELECT column_name, data_type, is_nullable 
+       FROM information_schema.columns 
+       WHERE table_catalog = $1 AND table_schema = $2 AND table_name = $3 
+       ORDER BY ordinal_position",
+    )
+    .bind(&self.database_name)
+    .bind(schema)
+    .bind(table_name)
+    .fetch_all(&self.pool)
+    .await?;
+
+    let columns: Vec<DbColumn> = rows
+      .into_iter()
+      .filter_map(|row| {
+        let name = row.try_get::<String, _>("column_name").ok()?;
+        let data_type = row.try_get::<String, _>("data_type").ok()?;
+        let is_nullable_str = row.try_get::<String, _>("is_nullable").ok()?;
+        let is_nullable = is_nullable_str == "YES";
+        Some(DbColumn { name, data_type, is_nullable })
+      })
+      .collect();
+
+    Ok(columns)
   }
 
   async fn query(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {

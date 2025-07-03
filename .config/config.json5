@@ -1,4 +1,7 @@
 {
+  "editor": {
+  "backend": "tui-textarea"
+},
   "keybindings": {
     "Home": {
       "<k>": "TableMoveUp",
@@ -17,6 +20,7 @@
       "<Ctrl-enter>": "ExecuteQuery",
       "<F5>": "ExecuteQuery", // Alternative key for execute
       "<Ctrl-e>": "ExecuteQuery", // Another alternative
+      "<Ctrl-u>": "ClearQuery", // Clear the query editor
       "<Ctrl-q>": "Quit", // Quit the application
       "<tab>": "FocusResults",
     },
@@ -25,6 +29,10 @@
       "<j>": "RowMoveDown",
       "<h>": "ScrollTableLeft",
       "<l>": "ScrollTableRight",
+      "<up>": "RowMoveUp",
+      "<down>": "RowMoveDown",
+      "<left>": "ScrollTableLeft",
+      "<right>": "ScrollTableRight",
       "<enter>": "RowDetails",
       "<Ctrl-q>": "Quit", // Quit the application
       "<tab>": "FocusHome",

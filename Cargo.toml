@@ -29,6 +29,8 @@ libc = "0.2.148"
 log = "0.4.20"
 pretty_assertions = "1.4.0"
 ratatui = { version = "0.28", features = ["serde", "macros"] }
+rpassword = "7.3"
+dialoguer = "0.11"
 # ratatui-textarea = {git = "https://github.com/JonnyWalker81/ratatui-textarea.git"}
 rust_decimal = "1.33.1"
 serde = { version = "1.0.188", features = ["derive"] }
@@ -46,6 +48,18 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "serde"] }
 tui-textarea = "0.6.1"
 ropey = "1.6.0"
+nucleo = "0.5.0"
+
+# Zep editor dependencies (optional feature)
+imgui = { version = "0.12", optional = true }
+imgui-sys = { version = "0.12", optional = true }
 
 [build-dependencies]
 vergen = { version = "8.2.6", features = [ "build", "git", "gitoxide", "cargo" ]}
+cc = "1.0"
+bindgen = { version = "0.69", optional = true }
+
+[features]
+default = ["tui-textarea-editor"]
+tui-textarea-editor = []
+zep-editor = ["imgui", "imgui-sys", "dep:bindgen"]

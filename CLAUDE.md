@@ -31,10 +31,29 @@ Query Crafter is a TUI (Terminal User Interface) application for interacting wit
 
 ### Build and Run
 ```bash
-cargo build                                    # Debug build
+cargo build                                    # Debug build (tui-textarea editor only)
+cargo build --features zep-editor              # Build with optional Zep editor support
 cargo build --release                          # Release build
-cargo run                                      # Connect to PostgreSQL using config.toml
-cargo run -- <sqlite_file>                    # Connect to SQLite database file
+
+# PostgreSQL connections
+cargo run                                      # Connect using config.toml (first profile)
+cargo run -- -H host -p port -U user -d db    # Connect using CLI arguments (prompts for password)
+cargo run -- --connection-string "postgresql://user:pass@host:port/db"  # Full connection string
+cargo run -- -c 1                             # Use specific config.toml profile (0-based index)
+cargo run -- --password                       # Force password prompt (supports pasting)
+cargo run -- --sslmode disable               # Set SSL mode (disable, allow, prefer, require, verify-ca, verify-full)
+
+# Password input methods (in order of preference):
+# 1. Environment variable: PGPASSWORD=secret cargo run -- [args]
+# 2. Interactive prompt with paste support (Ctrl+Shift+V or right-click)
+# 3. Connection string: --connection-string "postgresql://user:pass@host/db"
+
+# SQLite connections  
+cargo run -- <sqlite_file>                    # Connect to SQLite database file (positional)
+cargo run -- -f <sqlite_file>                 # Connect to SQLite database file (-f flag)
+
+# Development
+cargo run --example editor_demo                # Test editor backend switching
 ```
 
 ### Testing and Quality
@@ -61,6 +80,36 @@ cargo doc --no-deps --document-private-items --all-features --workspace  # Gener
 - Modernized error handling and async/await patterns
 - Removed deprecated `tokio-timer` dependency
 
+### Editor Configuration
+Query Crafter supports multiple text editor backends for enhanced VIM editing:
+
+- **Default (tui-textarea)**: Built-in VIM emulation using tui_textarea crate
+- **Zep (optional)**: Advanced VIM editor with full C++ Zep integration
+
+To switch editors, update `config.toml`:
+```toml
+[editor]
+backend = "tui-textarea"  # or "zep"
+```
+
+### Zep Editor Setup
+To enable the Zep editor backend:
+
+1. **Install Dependencies**: Ensure C++ compiler and CMake are available
+2. **Enable Feature**: Build with `cargo build --features zep-editor`
+3. **Configure**: Set `backend = "zep"` in `config.toml`
+
+Note: Zep editor requires ImGui integration and is currently in experimental status.
+
+### Autocomplete Feature
+Query Crafter includes intelligent SQL autocomplete functionality:
+
+- **Manual Trigger**: Press `Ctrl+Space` while in insert mode to show autocomplete suggestions
+- **Context-Aware**: Suggests table names, column names, and SQL keywords based on cursor position
+- **Navigation**: Use `Tab/Down` and `Shift+Tab/Up` to navigate suggestions
+- **Selection**: Press `Enter` to apply selected suggestion or `Esc` to dismiss
+- **Smart Filtering**: Fuzzy matching with relevance scoring
+
 ### Database Setup
 The application expects database connection details in `config.toml`. For development, ensure you have either:
 - A PostgreSQL instance running with credentials matching `config.toml`
@@ -69,10 +118,15 @@ The application expects database connection details in `config.toml`. For develo
 ## Key Files
 
 - `src/app.rs` - Main application logic and database connection handling
-- `src/components/db.rs` - Database browser component with query execution
+- `src/components/db.rs` - Database browser component with query execution and editor backend selection
+- `src/components/vim.rs` - Default VIM editor implementation using tui_textarea
+- `src/components/zep_editor.rs` - Optional Zep editor integration with C++ FFI
+- `src/editor_component.rs` - Editor component trait abstraction
 - `src/sql.rs` - Database abstraction layer with `Queryer` trait
 - `src/tui.rs` - Terminal UI setup and event loop management
-- `config.toml` - Database connection configurations (embedded at build time)
+- `config.toml` - Database and editor configurations (embedded at build time)
+- `build.rs` - Build script for compiling Zep C++ library (when feature enabled)
+- `examples/editor_demo.rs` - Demo of editor backend switching functionality
 
 ## Database Support
 

@@ -1,35 +1,15 @@
-use std::{
-  any::Any,
-  sync::Arc,
-  thread,
-  time::{Duration, Instant},
-};
+use std::sync::Arc;
 
-use color_eyre::eyre::{self, anyhow, Result};
+use color_eyre::eyre::{anyhow, Result};
 use crossterm::event::KeyEvent;
 use ratatui::prelude::Rect;
-use serde::{Deserialize, Serialize};
-use sqlx::{
-  postgres::{PgColumn, PgPoolOptions, PgRow},
-  types::Uuid,
-  Column, Postgres, Row,
-};
+use sqlx::postgres::PgPoolOptions;
 use tokio::sync::mpsc;
-use tokio_stream::StreamExt;
-use toml::Value;
 
 use crate::{
   action::Action,
-  components::{
-    custom_vim_editor::CustomVimEditor,
-    db::{Db, DbTable},
-    fps::FpsCounter,
-    home::Home,
-    vim::Vim,
-    Component, ComponentKind,
-  },
+  components::{db::Db, Component, ComponentKind},
   config::Config,
-  editor_component::EditorComponent,
   mode::Mode,
   sql::Queryer,
   tui,
@@ -45,53 +25,71 @@ pub struct App {
   pub should_suspend: bool,
   pub mode: Mode,
   pub last_tick_key_events: Vec<KeyEvent>,
-  pool: Option<sqlx::Pool<sqlx::Postgres>>,
   db: Arc<dyn Queryer>,
-  pub editor: Box<dyn EditorComponent>,
 }
 
 static CONFIG: &[u8] = include_bytes!("../config.toml");
 
-fn to_connection(config: &str) -> Result<String> {
-  let app_config_contents = std::str::from_utf8(CONFIG)?;
-  let app_config = toml::from_str::<Value>(app_config_contents)?;
-  let v = app_config["connections"][0]["host"].clone();
-  let host = app_config["connections"][0]["host"].as_str().map_or("localhost", |v| v);
-  let port = app_config["connections"][0]["port"].as_integer().unwrap_or(5432);
-  let username = app_config["connections"][0]["username"].as_str().map_or("postgres", |v| v);
-  let password = app_config["connections"][0]["password"].as_str().map_or("", |v| v);
-  let database = app_config["connections"][0]["database"].as_str().map_or("postgres", |v| v);
-  let connection = format!("postgresql://{username}:{password}@{host}:{port}/{database}?sslmode=disable");
-  println!("Connection: {connection}");
-
-  Ok(connection)
-}
-
 impl App {
-  pub async fn new(tick_rate: f64, frame_rate: f64, filename: Option<String>) -> Result<Self> {
+  pub async fn new(tick_rate: f64, frame_rate: f64, cli_args: &crate::cli::Cli) -> Result<Self> {
     // let home = Home::new();
     // let fps = FpsCounter::default();
-    let db = Db::new();
     let config = Config::new()?;
+    eprintln!("Config: {config:?}");
+    let db = Db::new_with_config(Some(config.clone()));
     let mode = Mode::Home;
-    let (db_conn, pool) = match &filename {
-      Some(f) => {
-        let sqlite_conn = Arc::new(crate::sql::Sqlite::new(f).await?);
-        (sqlite_conn as Arc<dyn Queryer>, None)
-      },
-      None => {
-        let connection = to_connection("config.toml")?;
-        let pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
+    let db_conn = if cli_args.is_sqlite_mode() {
+      // SQLite mode - using -f/--file flag
+      let filename = cli_args.filename.as_ref().unwrap();
+      eprintln!("Connecting to SQLite database: {}", filename);
+      let sqlite_conn = Arc::new(crate::sql::Sqlite::new(filename).await?);
+      sqlite_conn as Arc<dyn Queryer>
+    } else if let Some(db_name) = cli_args.get_database_name() {
+      // Check if database name looks like a file path (contains .db, .sqlite, or path separators)
+      if db_name.contains(".db") || db_name.contains(".sqlite") || db_name.contains("/") || db_name.contains("\\") {
+        eprintln!("Detected SQLite database file from positional argument: {}", db_name);
+        let sqlite_conn = Arc::new(crate::sql::Sqlite::new(db_name).await?);
+        sqlite_conn as Arc<dyn Queryer>
+      } else {
+        // PostgreSQL mode with database name
+        let app_config_contents = std::str::from_utf8(CONFIG)?;
+        let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
+        let connections =
+          app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
+
+        let connection = cli_args
+          .build_pg_connection_string(connections)
+          .map_err(|e| anyhow!("Failed to build connection string: {}", e))?;
+
+        eprintln!("Connecting to PostgreSQL: {}", connection);
+
+        let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
         let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
-        (pg_conn as Arc<dyn Queryer>, Some(pool))
-      },
+        pg_conn as Arc<dyn Queryer>
+      }
+    } else {
+      // Default PostgreSQL mode - use CLI args, environment variables, and config.toml
+      let app_config_contents = std::str::from_utf8(CONFIG)?;
+      let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
+      let connections =
+        app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
+
+      let connection = cli_args
+        .build_pg_connection_string(connections)
+        .map_err(|e| anyhow!("Failed to build connection string: {}", e))?;
+
+      eprintln!("Connecting to PostgreSQL: {}", connection);
+
+      let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
+      let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
+      pg_conn as Arc<dyn Queryer>
     };
     // let postgres = crate::sql::Postgres::new(&connection).await?;
 
     Ok(Self {
       tick_rate,
       frame_rate,
-      filename,
+      filename: cli_args.filename.clone(),
       // components: vec![Box::new(home), Box::new(fps)],
       components: vec![Box::new(db)],
       should_quit: false,
@@ -99,9 +97,7 @@ impl App {
       config,
       mode,
       last_tick_key_events: Vec::new(),
-      pool,
       db: db_conn,
-      editor: Box::new(Vim::new(crate::editor_common::Mode::Normal)),
     })
   }
 
@@ -123,7 +119,6 @@ impl App {
     for component in self.components.iter_mut() {
       component.init(Rect::default())?;
     }
-    self.editor.init(Rect::default())?;
 
     init(action_tx.clone(), self.db.clone()).await?;
 
@@ -152,9 +147,7 @@ impl App {
               }
             };
 
-            if let Some(action) = self.editor.on_key_event(key)? {
-              action_tx.send(action)?;
-            }
+            // Editor key events are now handled by the Db component's editor backend
           },
           _ => {},
         }
@@ -225,13 +218,8 @@ impl App {
             }
           },
           Action::SwitchEditor => {
-            let current_text = self.editor.get_text();
-            if self.editor.as_any().is::<Vim>() {
-              self.editor = Box::new(CustomVimEditor::default());
-            } else {
-              self.editor = Box::new(Vim::new(crate::editor_common::Mode::Normal));
-            }
-            self.editor.set_text(&current_text);
+            // Editor switching is now handled by the Db component's editor backend configuration
+            // This could be implemented by updating the config and calling register_config_handler
           },
           _ => {},
         }

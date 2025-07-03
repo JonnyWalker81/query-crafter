@@ -1,24 +1,14 @@
-use std::{env, fs, io, io::BufRead};
-
-use crossterm::{
-  event::{DisableMouseCapture, EnableMouseCapture, KeyEvent},
-  terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use ratatui::{
-  backend::Backend,
-  layout::Rect,
-  widgets::{Block, Borders},
-};
+use crossterm::event::KeyEvent;
+use ratatui::widgets::{Block, BorderType, Borders};
 use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
 
 use crate::{
-  action::Action,
   editor_common::{Mode, Transition},
   editor_component::EditorComponent,
 };
 
 // State of Vim emulation
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Vim {
   mode: Mode,
   pending: Input, // Pending input to handle a sequence with two keys like gg
@@ -27,6 +17,7 @@ pub struct Vim {
 
 impl Vim {
   pub fn new(mode: Mode) -> Self {
+    eprintln!("Initializing Vim editor in mode: {:?}", mode);
     Self { mode, pending: Input::default(), textarea: TextArea::default() }
   }
 
@@ -107,6 +98,7 @@ impl Vim {
           Input { key: Key::Char('w'), .. } => self.textarea.move_cursor(CursorMove::WordForward),
           Input { key: Key::Char('b'), ctrl: false, .. } => self.textarea.move_cursor(CursorMove::WordBack),
           Input { key: Key::Char('^'), .. } => self.textarea.move_cursor(CursorMove::Head),
+          Input { key: Key::Char('0'), .. } => self.textarea.move_cursor(CursorMove::Head),
           Input { key: Key::Char('$'), .. } => self.textarea.move_cursor(CursorMove::End),
           Input { key: Key::Char('D'), .. } => {
             self.textarea.delete_line_by_end();
@@ -163,9 +155,13 @@ impl Vim {
             self.textarea.move_cursor(CursorMove::Head);
             return Transition::Mode(Mode::Insert);
           },
-          Input { key: Key::Char('q'), .. } => return Transition::Quit,
-          Input { key: Key::Char('e'), ctrl: true, .. } => self.textarea.scroll((1, 0)),
-          Input { key: Key::Char('y'), ctrl: true, .. } => self.textarea.scroll((-1, 0)),
+          // Input { key: Key::Char('q'), .. } => return Transition::Quit,
+          Input { key: Key::Char('e'), ctrl: true, .. } => {
+            return Transition::Action(crate::action::Action::ExecuteQuery);
+          },
+          Input { key: Key::Char('y'), ctrl: true, .. } => {
+            return Transition::Action(crate::action::Action::ExecuteQuery);
+          },
           Input { key: Key::Char('d'), ctrl: true, .. } => self.textarea.scroll(Scrolling::HalfPageDown),
           Input { key: Key::Char('u'), ctrl: true, .. } => self.textarea.scroll(Scrolling::HalfPageUp),
           Input { key: Key::Char('f'), ctrl: true, .. } => self.textarea.scroll(Scrolling::PageDown),
@@ -260,6 +256,8 @@ impl Vim {
       Mode::Insert => {
         match input {
           Input { key: Key::Esc, .. } | Input { key: Key::Char('c'), ctrl: true, .. } => Transition::Mode(Mode::Normal),
+          Input { key: Key::Char('e'), ctrl: true, .. } => Transition::Action(crate::action::Action::ExecuteQuery),
+          Input { key: Key::Char('y'), ctrl: true, .. } => Transition::Action(crate::action::Action::ExecuteQuery),
           input => {
             self.textarea.input(input); // Use default key mappings in insert mode
             Transition::Mode(Mode::Insert)
@@ -268,12 +266,73 @@ impl Vim {
       },
     }
   }
+
+  /// Returns the selected text from a `tui-textarea` by using its selection range.
+  ///
+  /// # Arguments
+  ///
+  /// * `textarea` - An immutable reference to the `TextArea` instance.
+  ///
+  /// # Returns
+  ///
+  /// * An `Option<String>` containing the selected text if there is a
+  ///   selection, or `None` otherwise.
+  fn get_selected_text(textarea: &TextArea) -> Option<String> {
+    // selection_range() returns Option<((start_row, start_col), (end_row, end_col))>
+    let selection = textarea.selection_range()?;
+
+    let (start_row, start_col) = selection.0;
+    let (end_row, end_col) = selection.1;
+
+    // The TextArea can be dereferenced to a slice of strings (`&[String]`)
+    // which gives us access to the lines of text.
+    let lines = textarea.lines();
+
+    if start_row == end_row {
+      // Single-line selection
+      lines.get(start_row).map(|line| {
+        let end = std::cmp::min(end_col, line.len());
+        line.get(start_col..end).unwrap_or("").to_string()
+      })
+    } else {
+      // Multi-line selection
+      let mut result = Vec::new();
+
+      // First line: from start_col to the end
+      if let Some(line) = lines.get(start_row) {
+        result.push(line.get(start_col..).unwrap_or(""));
+      }
+
+      // Middle lines: entire lines
+      if end_row > start_row + 1 {
+        for i in (start_row + 1)..end_row {
+          if let Some(line) = lines.get(i) {
+            result.push(line);
+          }
+        }
+      }
+
+      // Last line: from the beginning to end_col
+      if let Some(line) = lines.get(end_row) {
+        let end = std::cmp::min(end_col, line.len());
+        result.push(line.get(..end).unwrap_or(""));
+      }
+
+      Some(result.join("\n"))
+    }
+  }
 }
 
 impl EditorComponent for Vim {
   fn init(&mut self, _area: ratatui::layout::Rect) -> color_eyre::eyre::Result<()> {
     // Set initial block and styling
-    let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL).title("Query Editor");
+    let block = Block::default()
+      .borders(Borders::ALL)
+      .title("Query Editor")
+      .title_style(crate::theme::Theme::title())
+      .border_style(crate::theme::Theme::border_normal())
+      .border_type(BorderType::Rounded)
+      .style(crate::theme::Theme::bg_primary());
     self.textarea.set_block(block);
     self.textarea.set_cursor_style(self.mode.cursor_style());
     Ok(())
@@ -293,17 +352,32 @@ impl EditorComponent for Vim {
         self.pending = input.clone();
       },
       Transition::Quit => return Ok(Some(crate::action::Action::Quit)),
+      Transition::Action(action) => return Ok(Some(action)),
     }
 
     Ok(None)
   }
 
   fn draw(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-    // Update the block title to show current mode
-    let block = ratatui::widgets::Block::default()
-      .borders(ratatui::widgets::Borders::ALL)
-      .title(format!("Query Editor - {}", self.mode));
+    self.draw_with_focus(f, area, false); // Default to not focused
+  }
+
+  fn draw_with_focus(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect, is_focused: bool) {
+    // Update the block title to show current mode with focus state
+    let border_style =
+      if is_focused { crate::theme::Theme::border_focused() } else { crate::theme::Theme::border_normal() };
+
+    let block = Block::default()
+      .borders(Borders::ALL)
+      .title(format!("Query Editor - {}", self.mode))
+      .title_style(crate::theme::Theme::title())
+      .border_style(border_style)
+      .border_type(BorderType::Rounded)
+      .style(crate::theme::Theme::bg_primary());
     self.textarea.set_block(block);
+
+    // Ensure cursor style is always up to date
+    self.textarea.set_cursor_style(self.mode.cursor_style());
 
     f.render_widget(&self.textarea, area);
   }
@@ -312,12 +386,24 @@ impl EditorComponent for Vim {
     self.textarea.lines().join("\n")
   }
 
+  fn get_selected_text(&self) -> Option<String> {
+    if self.textarea.is_selecting() {
+      Vim::get_selected_text(&self.textarea)
+    } else {
+      None
+    }
+  }
+
   fn set_text(&mut self, text: &str) {
     self.textarea = TextArea::from(text.lines().map(String::from).collect::<Vec<_>>());
     self.textarea.set_cursor_style(self.mode.cursor_style());
-    let block = ratatui::widgets::Block::default()
-      .borders(ratatui::widgets::Borders::ALL)
-      .title(format!("Query Editor - {}", self.mode));
+    let block = Block::default()
+      .borders(Borders::ALL)
+      .title(format!("Query Editor - {}", self.mode))
+      .title_style(crate::theme::Theme::title())
+      .border_style(crate::theme::Theme::border_normal())
+      .border_type(BorderType::Rounded)
+      .style(crate::theme::Theme::bg_primary());
     self.textarea.set_block(block);
   }
 
@@ -327,5 +413,75 @@ impl EditorComponent for Vim {
 
   fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
     self
+  }
+}
+
+impl Vim {
+  /// Get the current cursor position (row, col)
+  pub fn get_cursor_position(&self) -> (usize, usize) {
+    self.textarea.cursor()
+  }
+
+  /// Get text from start up to current cursor position
+  pub fn get_text_up_to_cursor(&self) -> String {
+    let lines = self.textarea.lines();
+    let (cursor_row, cursor_col) = self.textarea.cursor();
+
+    if cursor_row >= lines.len() {
+      return lines.join("\n");
+    }
+
+    let mut result = String::new();
+
+    // Add complete lines before cursor row
+    for (i, line) in lines.iter().enumerate() {
+      if i < cursor_row {
+        if i > 0 {
+          result.push('\n');
+        }
+        result.push_str(line);
+      } else if i == cursor_row {
+        if cursor_row > 0 {
+          result.push('\n');
+        }
+        // Add partial line up to cursor column
+        let chars: Vec<char> = line.chars().collect();
+        let end_pos = std::cmp::min(cursor_col, chars.len());
+        result.push_str(&chars[..end_pos].iter().collect::<String>());
+        break;
+      }
+    }
+
+    result
+  }
+
+  /// Insert text at current cursor position
+  pub fn insert_text_at_cursor(&mut self, text: &str) {
+    self.textarea.insert_str(text);
+  }
+
+  /// Delete the word before the cursor
+  pub fn delete_word_before_cursor(&mut self) {
+    use tui_textarea::CursorMove;
+
+    // Save current position
+    let original_pos = self.textarea.cursor();
+
+    // Move to start of current word
+    self.textarea.move_cursor(CursorMove::WordBack);
+    let word_start = self.textarea.cursor();
+
+    // If we moved, select from word start to original position
+    if word_start != original_pos {
+      self.textarea.start_selection();
+
+      // Move back to original position to select the word
+      while self.textarea.cursor() != original_pos {
+        self.textarea.move_cursor(CursorMove::Forward);
+      }
+
+      // Delete the selected text
+      self.textarea.cut();
+    }
   }
 }
