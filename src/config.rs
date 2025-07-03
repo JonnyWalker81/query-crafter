@@ -8,7 +8,21 @@ use serde::{de::Deserializer, Deserialize};
 
 use crate::{action::Action, mode::Mode};
 
-const CONFIG: &str = include_str!("../.config/config.json5");
+// Load config at runtime to prevent constant rebuilds
+fn load_default_config() -> Result<String> {
+    let config_path = PathBuf::from(".config/config.json5");
+    if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+    } else {
+        // Return default config if file doesn't exist
+        Ok(String::from(r#"{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "keybindings": {
+    "Home": {}
+  }
+}"#))
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Default)]
 pub struct AppConfig {
@@ -42,7 +56,8 @@ pub struct Config {
 
 impl Config {
   pub fn new() -> Result<Self, config::ConfigError> {
-    let default_config: Config = json5::from_str(CONFIG).unwrap();
+    let config_str = load_default_config().unwrap_or_else(|_| String::from("{}"));
+    let default_config: Config = json5::from_str(&config_str).unwrap();
     let data_dir = crate::utils::get_data_dir();
     let config_dir = crate::utils::get_config_dir();
     let mut builder = config::Config::builder()

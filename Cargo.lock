@@ -2846,6 +2846,7 @@ dependencies = [
  "nucleo",
  "once_cell",
  "pretty_assertions",
+ "query-crafter-theme",
  "ratatui",
  "ropey",
  "rpassword",
@@ -2864,6 +2865,14 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tui-textarea",
+]
+
+[[package]]
+name = "query-crafter-theme"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "ratatui",
 ]
 
 [[package]]

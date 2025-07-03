@@ -30,7 +30,19 @@ pub struct App {
   tunnel_manager: Option<TunnelManager>,
 }
 
-static CONFIG: &[u8] = include_bytes!("../config.toml");
+// Load config at runtime to prevent constant rebuilds
+fn load_config_toml() -> Result<String> {
+    std::fs::read_to_string("config.toml")
+        .or_else(|_| {
+            // Fallback to executable directory
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    return std::fs::read_to_string(exe_dir.join("config.toml"));
+                }
+            }
+            Err(color_eyre::eyre::eyre!("config.toml not found"))
+        })
+}
 
 impl App {
   pub async fn new(tick_rate: f64, frame_rate: f64, cli_args: &crate::cli::Cli) -> Result<Self> {
@@ -91,7 +103,7 @@ impl App {
 
   /// Connect directly to PostgreSQL without tunnel
   async fn connect_direct(cli_args: &crate::cli::Cli) -> Result<Arc<dyn Queryer>> {
-    let app_config_contents = std::str::from_utf8(CONFIG)?;
+    let app_config_contents = load_config_toml()?;
     let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
     let connections =
       app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
@@ -132,7 +144,7 @@ impl App {
     let _local_port = tunnel.establish_tunnel().await?;
 
     // Get connection parameters from config or CLI
-    let app_config_contents = std::str::from_utf8(CONFIG)?;
+    let app_config_contents = load_config_toml()?;
     let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
     let connections = app_config["connections"].as_array();
 
