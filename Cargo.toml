@@ -5,7 +5,6 @@ edition = "2021"
 description = "TUI for interacting with a database"
 repository = "https://github.com/JonnyWalker81/query-crafter"
 authors = ["Jonathan Rothberg <jon@join.build>"]
-build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -57,7 +56,6 @@ aws-sdk-rds = "1.90"
 
 
 [build-dependencies]
-vergen = { version = "8.2.6", features = [ "build", "git", "gitoxide", "cargo" ]}
 
 [features]
 default = ["tui-textarea-editor"]

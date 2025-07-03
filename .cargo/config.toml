@@ -1,0 +1,34 @@
+[build]
+# Use a stable target directory to avoid Nix-related rebuilds
+target-dir = "target"
+
+# Number of parallel jobs, defaults to # of CPUs
+jobs = 8
+
+[target.aarch64-unknown-linux-gnu]
+# Use lld linker for faster linking
+linker = "clang"
+rustflags = [
+  "-C", "link-arg=-fuse-ld=lld",
+  "-C", "target-cpu=native",
+]
+
+[profile.dev]
+# Faster builds with reasonable runtime performance
+opt-level = 0
+debug = 1  # Line info only, faster builds
+lto = false
+incremental = true
+overflow-checks = true
+
+[profile.dev.package."*"]
+# Optimize dependencies even in debug mode
+opt-level = 2
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
