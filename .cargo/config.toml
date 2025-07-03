@@ -6,10 +6,8 @@ target-dir = "target"
 jobs = 8
 
 [target.aarch64-unknown-linux-gnu]
-# Use lld linker for faster linking
-linker = "clang"
+# Use system default linker
 rustflags = [
-  "-C", "link-arg=-fuse-ld=lld",
   "-C", "target-cpu=native",
 ]
 
