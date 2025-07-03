@@ -584,7 +584,7 @@ impl Db {
       } else {
         theme::border_normal()
       })
-      .title("[2] Query History")
+      .title("[2] Query History - [Enter] Execute [y] Copy [c] Edit [d] Delete")
       .title_style(theme::title())
       .border_type(BorderType::Rounded);
 
@@ -1209,6 +1209,12 @@ impl Db {
         Span::raw(" - Switch between Query/History tabs"),
       ]),
       Line::from(""),
+      Line::from(vec![Span::styled("History Tab", theme::header())]),
+      Line::from(vec![Span::styled("Enter", theme::info()), Span::raw(" - Execute selected query")]),
+      Line::from(vec![Span::styled("c", theme::info()), Span::raw(" - Copy query to editor")]),
+      Line::from(vec![Span::styled("y", theme::info()), Span::raw(" - Copy query to clipboard")]),
+      Line::from(vec![Span::styled("d", theme::info()), Span::raw(" - Delete query from history")]),
+      Line::from(""),
       Line::from(vec![Span::styled("Results (Panel 3)", theme::header())]),
       Line::from(vec![Span::styled("/", theme::info()), Span::raw(" - Search results")]),
       Line::from(vec![Span::styled("Space", theme::info()), Span::raw(" - Toggle row detail view")]),
@@ -1444,6 +1450,22 @@ impl Component for Db {
                 if let Some(entry) = self.query_history.get(actual_index) {
                   self.editor_backend.set_text(&entry.query);
                   self.selected_tab = 0; // Switch back to query tab
+                }
+              }
+              return Ok(None);
+            },
+            KeyCode::Char('y') => {
+              // Copy selected history item to clipboard
+              if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() {
+                let actual_index = self.query_history.len() - 1 - self.selected_history_index;
+                if let Some(entry) = self.query_history.get(actual_index) {
+                  let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+                  if let Err(e) = ctx.set_contents(entry.query.clone()) {
+                    eprintln!("Failed to copy to clipboard: {e}");
+                  } else {
+                    // Optionally show feedback that copy succeeded
+                    eprintln!("Query copied to clipboard");
+                  }
                 }
               }
               return Ok(None);
