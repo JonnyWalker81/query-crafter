@@ -10,6 +10,7 @@ pub mod editor_component;
 pub mod mode;
 pub mod sql;
 pub mod theme;
+pub mod theme_const;
 pub mod tui;
 pub mod tunnel;
 pub mod utils;

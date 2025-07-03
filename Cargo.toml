@@ -60,6 +60,7 @@ tracing-subscriber = { version = "0.3.17", features = ["env-filter", "serde"] }
 tui-textarea = "0.6.1"
 ropey = "1.6.0"
 nucleo = "0.5"
+once_cell = "1.19"
 
 # AWS SDK dependencies
 aws-config = "1.1"

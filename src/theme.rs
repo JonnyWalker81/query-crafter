@@ -1,299 +1,176 @@
 use ratatui::style::{Color, Modifier, Style};
 
 /// Modern One Dark Pro theme inspired by popular Rust TUI applications
-/// like Helix, gitui, kubetui, and bottom
+/// This now delegates to theme_const for better compilation performance
 pub struct Theme;
 
 impl Theme {
-  // #8b949e - Line numbers
+  // Re-export color constants from theme_const
+  pub const ACCENT_BLUE: Color = crate::theme_const::ACCENT_BLUE;
+  pub const ACCENT_CYAN: Color = crate::theme_const::ACCENT_CYAN;
+  pub const ACCENT_GREEN: Color = crate::theme_const::ACCENT_GREEN;
+  pub const ACCENT_ORANGE: Color = crate::theme_const::ACCENT_ORANGE;
+  pub const ACCENT_PURPLE: Color = crate::theme_const::ACCENT_PURPLE;
+  pub const ACCENT_RED: Color = crate::theme_const::ACCENT_RED;
+  pub const BG_CURSOR: Color = crate::theme_const::BG_CURSOR;
+  pub const BG_PRIMARY: Color = crate::theme_const::BG_PRIMARY;
+  pub const BG_SECONDARY: Color = crate::theme_const::BG_SECONDARY;
+  pub const BG_SELECTION: Color = crate::theme_const::BG_SELECTION;
+  pub const BG_TERTIARY: Color = crate::theme_const::BG_TERTIARY;
+  pub const BORDER_FOCUSED: Color = crate::theme_const::BORDER_FOCUSED;
+  pub const BORDER_MUTED: Color = crate::theme_const::BORDER_MUTED;
+  pub const BORDER_NORMAL: Color = crate::theme_const::BORDER_NORMAL;
+  pub const ERROR: Color = crate::theme_const::ERROR;
+  pub const FG_PRIMARY: Color = crate::theme_const::FG_PRIMARY;
+  pub const FG_SECONDARY: Color = crate::theme_const::FG_SECONDARY;
+  pub const FG_TERTIARY: Color = crate::theme_const::FG_TERTIARY;
+  pub const INFO: Color = crate::theme_const::INFO;
+  pub const SUCCESS: Color = crate::theme_const::SUCCESS;
+  pub const WARNING: Color = crate::theme_const::WARNING;
 
-  // Accent colors
-  pub const ACCENT_BLUE: Color = Color::Rgb(97, 175, 239);
-  // #d19a66 - Numbers, warnings
-  pub const ACCENT_CYAN: Color = Color::Rgb(86, 182, 194);
-  // #c678dd - Keywords, types
-  pub const ACCENT_GREEN: Color = Color::Rgb(152, 195, 121);
-  // #e06c75 - Errors, deletion
-  pub const ACCENT_ORANGE: Color = Color::Rgb(209, 154, 102);
-  // #61afef - Functions, keywords
-  pub const ACCENT_PURPLE: Color = Color::Rgb(198, 120, 221);
-  // #98c379 - Strings, success
-  pub const ACCENT_RED: Color = Color::Rgb(224, 108, 117);
-  // #3e4451 - Selection background
-  pub const BG_CURSOR: Color = Color::Rgb(82, 89, 102);
-  // Background colors
-  pub const BG_PRIMARY: Color = Color::Rgb(40, 44, 52);
-  // #282c34 - Main background
-  pub const BG_SECONDARY: Color = Color::Rgb(33, 37, 43);
-  // #2c313a - Input backgrounds
-  pub const BG_SELECTION: Color = Color::Rgb(62, 68, 81);
-  // #21252b - Secondary panels
-  pub const BG_TERTIARY: Color = Color::Rgb(44, 49, 58);
-  // #5c6370 - Normal borders
-  pub const BORDER_FOCUSED: Color = Color::Rgb(97, 175, 239);
-  // #61afef - Focused borders
-  pub const BORDER_MUTED: Color = Color::Rgb(62, 68, 81);
-  // #61afef - Info states
+  // Delegate all style methods to theme_const
+  #[inline(always)]
+  pub fn bg_primary() -> Style { crate::theme_const::bg_primary() }
 
-  // Border colors
-  pub const BORDER_NORMAL: Color = Color::Rgb(92, 99, 112);
-  // #e5c07b - Warning states
-  pub const ERROR: Color = Color::Rgb(224, 108, 117);
-  // #528bff - Cursor background
+  #[inline(always)]
+  pub fn bg_secondary() -> Style { crate::theme_const::bg_secondary() }
 
-  // Foreground colors
-  pub const FG_PRIMARY: Color = Color::Rgb(171, 178, 191);
-  // #abb2bf - Main text
-  pub const FG_SECONDARY: Color = Color::Rgb(92, 99, 112);
-  // #5c6370 - Muted text/comments
-  pub const FG_TERTIARY: Color = Color::Rgb(139, 148, 158);
-  // #e06c75 - Error states
-  pub const INFO: Color = Color::Rgb(97, 175, 239);
-  // #56b6c2 - Operators, info
+  #[inline(always)]
+  pub fn input() -> Style { crate::theme_const::input() }
 
-  // Status colors
-  pub const SUCCESS: Color = Color::Rgb(152, 195, 121);
-  // #98c379 - Success states
-  pub const WARNING: Color = Color::Rgb(229, 192, 123);
+  #[inline(always)]
+  pub fn selection() -> Style { crate::theme_const::selection() }
 
-  // #3e4451 - Subtle borders
+  #[inline(always)]
+  pub fn selection_active() -> Style { crate::theme_const::selection_active() }
 
-  // Component-specific styles
+  #[inline(always)]
+  pub fn border_normal() -> Style { crate::theme_const::border_normal() }
 
-  /// Main application background
-  #[inline]
-  pub fn bg_primary() -> Style {
-    Style::default().bg(Self::BG_PRIMARY).fg(Self::FG_PRIMARY)
-  }
+  #[inline(always)]
+  pub fn border_focused() -> Style { crate::theme_const::border_focused() }
 
-  /// Secondary panel background
-  #[inline]
-  pub fn bg_secondary() -> Style {
-    Style::default().bg(Self::BG_SECONDARY).fg(Self::FG_PRIMARY)
-  }
+  #[inline(always)]
+  pub fn header() -> Style { crate::theme_const::header() }
 
-  /// Input field styling
-  #[inline]
-  pub fn input() -> Style {
-    Style::default().bg(Self::BG_TERTIARY).fg(Self::FG_PRIMARY)
-  }
+  #[inline(always)]
+  pub fn title() -> Style { crate::theme_const::title() }
 
-  /// Selection/highlight styling
-  #[inline]
-  pub fn selection() -> Style {
-    Style::default().bg(Self::BG_SELECTION).fg(Self::FG_PRIMARY).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn success() -> Style { crate::theme_const::success() }
 
-  /// Active selection with accent color
-  #[inline]
-  pub fn selection_active() -> Style {
-    Style::default().bg(Self::ACCENT_BLUE).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn warning() -> Style { crate::theme_const::warning() }
 
-  /// Normal border styling
-  #[inline]
-  pub fn border_normal() -> Style {
-    Style::default().fg(Self::BORDER_NORMAL)
-  }
+  #[inline(always)]
+  pub fn error() -> Style { crate::theme_const::error() }
 
-  /// Focused border styling
-  #[inline]
-  pub fn border_focused() -> Style {
-    Style::default().fg(Self::BORDER_FOCUSED)
-  }
+  #[inline(always)]
+  pub fn info() -> Style { crate::theme_const::info() }
 
-  /// Header styling for tables
-  #[inline]
-  pub fn header() -> Style {
-    Style::default().bg(Self::BG_SELECTION).fg(Self::ACCENT_CYAN).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-  }
+  #[inline(always)]
+  pub fn muted() -> Style { crate::theme_const::muted() }
 
-  /// Title styling
-  #[inline]
-  pub fn title() -> Style {
-    Style::default().fg(Self::ACCENT_BLUE).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn line_numbers() -> Style { crate::theme_const::line_numbers() }
 
-  /// Success message styling
-  #[inline]
-  pub fn success() -> Style {
-    Style::default().fg(Self::SUCCESS).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn tab_normal() -> Style { crate::theme_const::tab_normal() }
 
-  /// Warning message styling  
-  #[inline]
-  pub fn warning() -> Style {
-    Style::default().fg(Self::WARNING).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn tab_selected() -> Style { crate::theme_const::tab_selected() }
 
-  /// Error message styling
-  #[inline]
-  pub fn error() -> Style {
-    Style::default().fg(Self::ERROR).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn status_bar() -> Style { crate::theme_const::status_bar() }
 
-  /// Info message styling
-  #[inline]
-  pub fn info() -> Style {
-    Style::default().fg(Self::INFO)
-  }
+  #[inline(always)]
+  pub fn cursor_normal() -> Style { crate::theme_const::cursor_normal() }
 
-  /// Muted text styling
-  #[inline]
-  pub fn muted() -> Style {
-    Style::default().fg(Self::FG_SECONDARY)
-  }
+  #[inline(always)]
+  pub fn cursor_insert() -> Style { crate::theme_const::cursor_insert() }
 
-  /// Line numbers styling
-  #[inline]
-  pub fn line_numbers() -> Style {
-    Style::default().fg(Self::FG_TERTIARY)
-  }
+  #[inline(always)]
+  pub fn cursor_visual() -> Style { crate::theme_const::cursor_visual() }
 
-  /// Tab styling - normal
-  #[inline]
-  pub fn tab_normal() -> Style {
-    Style::default().fg(Self::FG_SECONDARY)
-  }
+  #[inline(always)]
+  pub fn sql_keyword() -> Style { crate::theme_const::sql_keyword() }
 
-  /// Tab styling - selected
-  #[inline]
-  pub fn tab_selected() -> Style {
-    Style::default().fg(Self::ACCENT_BLUE).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-  }
+  #[inline(always)]
+  pub fn sql_function() -> Style { crate::theme_const::sql_function() }
 
-  /// Status bar styling
-  #[inline]
-  pub fn status_bar() -> Style {
-    Style::default().bg(Self::BG_SECONDARY).fg(Self::FG_PRIMARY)
-  }
+  #[inline(always)]
+  pub fn sql_string() -> Style { crate::theme_const::sql_string() }
 
-  // Mode-specific cursor styles for vim editor
+  #[inline(always)]
+  pub fn sql_number() -> Style { crate::theme_const::sql_number() }
 
-  #[inline]
-  pub fn cursor_normal() -> Style {
-    Style::default().bg(Self::ACCENT_ORANGE).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
-  }
+  #[inline(always)]
+  pub fn sql_comment() -> Style { crate::theme_const::sql_comment() }
 
-  #[inline]
-  pub fn cursor_insert() -> Style {
-    Style::default().bg(Self::ACCENT_GREEN).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
-  }
-
-  #[inline]
-  pub fn cursor_visual() -> Style {
-    Style::default().bg(Self::ACCENT_PURPLE).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
-  }
-
-  // Syntax highlighting for SQL
-
-  #[inline]
-  pub fn sql_keyword() -> Style {
-    Style::default().fg(Self::ACCENT_PURPLE).add_modifier(Modifier::BOLD)
-  }
-
-  #[inline]
-  pub fn sql_function() -> Style {
-    Style::default().fg(Self::ACCENT_BLUE)
-  }
-
-  #[inline]
-  pub fn sql_string() -> Style {
-    Style::default().fg(Self::ACCENT_GREEN)
-  }
-
-  #[inline]
-  pub fn sql_number() -> Style {
-    Style::default().fg(Self::ACCENT_ORANGE)
-  }
-
-  #[inline]
-  pub fn sql_comment() -> Style {
-    Style::default().fg(Self::FG_SECONDARY)
-  }
-
-  #[inline]
-  pub fn sql_operator() -> Style {
-    Style::default().fg(Self::ACCENT_CYAN)
-  }
+  #[inline(always)]
+  pub fn sql_operator() -> Style { crate::theme_const::sql_operator() }
 }
 
-/// Modern color palette inspired by popular Rust TUI applications
+/// Modern color palette - delegates to theme_const
 pub struct Colors;
 
 impl Colors {
-  // Yellow
-  pub const DANGER: Color = Color::Rgb(224, 108, 117);
-  // Cyan
-
-  // Grays for modern interfaces
+  pub const DANGER: Color = crate::theme_const::ERROR;
   pub const GRAY_100: Color = Color::Rgb(248, 249, 250);
-  // Lightest
   pub const GRAY_200: Color = Color::Rgb(233, 236, 239);
   pub const GRAY_300: Color = Color::Rgb(206, 212, 218);
   pub const GRAY_400: Color = Color::Rgb(173, 181, 189);
   pub const GRAY_500: Color = Color::Rgb(108, 117, 125);
-  // Medium
   pub const GRAY_600: Color = Color::Rgb(92, 99, 112);
   pub const GRAY_700: Color = Color::Rgb(73, 80, 87);
   pub const GRAY_800: Color = Color::Rgb(52, 58, 64);
   pub const GRAY_900: Color = Color::Rgb(33, 37, 41);
-  // Red
   pub const INFO: Color = Color::Rgb(86, 182, 194);
-  // One Dark Pro palette
   pub const ONE_DARK_BG: Color = Color::Rgb(40, 44, 52);
   pub const ONE_DARK_FG: Color = Color::Rgb(171, 178, 191);
-  // Semantic colors for modern TUI applications
   pub const PRIMARY: Color = Color::Rgb(97, 175, 239);
-  // Blue
   pub const SECONDARY: Color = Color::Rgb(198, 120, 221);
-  // Purple
   pub const SUCCESS: Color = Color::Rgb(152, 195, 121);
-  // Green
-  pub const WARNING: Color = Color::Rgb(229, 192, 123); // Darkest
+  pub const WARNING: Color = Color::Rgb(229, 192, 123);
 }
 
-// Convenience functions for common styling patterns
+// Convenience functions delegate to theme_const
 pub mod style {
   use super::*;
 
-  /// Creates a modern button style
-  #[inline]
+  #[inline(always)]
   pub fn button(active: bool) -> Style {
     if active {
-      Theme::selection_active()
+      crate::theme_const::selection_active()
     } else {
       Style::default().bg(Theme::BG_SECONDARY).fg(Theme::FG_PRIMARY).add_modifier(Modifier::BOLD)
     }
   }
 
-  /// Creates a modern list item style
-  #[inline]
+  #[inline(always)]
   pub fn list_item(selected: bool) -> Style {
     if selected {
-      Theme::selection_active()
+      crate::theme_const::selection_active()
     } else {
       Style::default().fg(Theme::FG_PRIMARY)
     }
   }
 
-  /// Creates a modern table row style
-  #[inline]
+  #[inline(always)]
   pub fn table_row(selected: bool) -> Style {
     if selected {
-      Theme::selection()
+      crate::theme_const::selection()
     } else {
       Style::default().fg(Theme::FG_PRIMARY)
     }
   }
 
-  /// Creates a modern border style based on focus state
-  #[inline]
+  #[inline(always)]
   pub fn border(focused: bool) -> Style {
     if focused {
-      Theme::border_focused()
+      crate::theme_const::border_focused()
     } else {
-      Theme::border_normal()
+      crate::theme_const::border_normal()
     }
   }
 }
