@@ -8,6 +8,11 @@ jobs = 8
 # Enable incremental compilation
 incremental = true
 
+[env]
+# Force Cargo to use mtime-based change detection instead of content-based
+# This helps with Nix environments where timestamps can be problematic
+CARGO_CACHE_RUSTC_INFO = "1"
+
 # [target.aarch64-unknown-linux-gnu]
 # Temporarily disable target-specific flags to avoid linker issues
 
