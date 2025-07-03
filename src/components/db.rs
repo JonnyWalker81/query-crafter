@@ -1462,9 +1462,6 @@ impl Component for Db {
                   let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
                   if let Err(e) = ctx.set_contents(entry.query.clone()) {
                     eprintln!("Failed to copy to clipboard: {e}");
-                  } else {
-                    // Optionally show feedback that copy succeeded
-                    eprintln!("Query copied to clipboard");
                   }
                 }
               }

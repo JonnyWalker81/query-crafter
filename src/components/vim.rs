@@ -19,7 +19,6 @@ pub struct Vim {
 
 impl Vim {
   pub fn new(mode: Mode) -> Self {
-    eprintln!("Initializing Vim editor in mode: {mode:?}");
     Self { mode, pending: Input::default(), textarea: TextArea::default() }
   }
 
