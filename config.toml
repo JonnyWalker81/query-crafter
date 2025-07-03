@@ -27,3 +27,12 @@ username = "postgres"
 password = "secret5"
 database = "postgres"
 sslmode = "prefer"
+
+# SSH Tunnel configuration
+# The bastion search looks for EC2 instances where the Name tag contains both:
+# - The environment name (e.g., "staging")
+# - The word "bastion"
+# Example: An instance named "staging-bastion" or "bastion-staging-01" would match for env=staging
+[tunnel]
+environments = ["dev", "staging", "master-staging", "production", "feature"]
+default_user = "ec2-user"

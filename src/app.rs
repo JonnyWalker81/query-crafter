@@ -13,6 +13,7 @@ use crate::{
   mode::Mode,
   sql::Queryer,
   tui,
+  tunnel::{TunnelConfig, TunnelManager},
 };
 
 pub struct App {
@@ -26,18 +27,19 @@ pub struct App {
   pub mode: Mode,
   pub last_tick_key_events: Vec<KeyEvent>,
   db: Arc<dyn Queryer>,
+  tunnel_manager: Option<TunnelManager>,
 }
 
 static CONFIG: &[u8] = include_bytes!("../config.toml");
 
 impl App {
   pub async fn new(tick_rate: f64, frame_rate: f64, cli_args: &crate::cli::Cli) -> Result<Self> {
-    // let home = Home::new();
-    // let fps = FpsCounter::default();
     let config = Config::new()?;
-    eprintln!("Config: {config:?}");
     let db = Db::new_with_config(Some(config.clone()));
     let mode = Mode::Home;
+
+    let mut tunnel_manager = None;
+
     let db_conn = if cli_args.is_sqlite_mode() {
       // SQLite mode - using -f/--file flag
       let filename = cli_args.filename.as_ref().unwrap();
@@ -52,45 +54,30 @@ impl App {
         sqlite_conn as Arc<dyn Queryer>
       } else {
         // PostgreSQL mode with database name
-        let app_config_contents = std::str::from_utf8(CONFIG)?;
-        let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
-        let connections =
-          app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
-
-        let connection = cli_args
-          .build_pg_connection_string(connections)
-          .map_err(|e| anyhow!("Failed to build connection string: {}", e))?;
-
-        eprintln!("Connecting to PostgreSQL: {}", connection);
-
-        let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
-        let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
-        pg_conn as Arc<dyn Queryer>
+        if cli_args.is_tunnel_mode() {
+          // Tunnel mode
+          Self::connect_via_tunnel(cli_args, db_name, &mut tunnel_manager).await?
+        } else {
+          // Direct connection
+          Self::connect_direct(cli_args).await?
+        }
       }
     } else {
-      // Default PostgreSQL mode - use CLI args, environment variables, and config.toml
-      let app_config_contents = std::str::from_utf8(CONFIG)?;
-      let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
-      let connections =
-        app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
-
-      let connection = cli_args
-        .build_pg_connection_string(connections)
-        .map_err(|e| anyhow!("Failed to build connection string: {}", e))?;
-
-      eprintln!("Connecting to PostgreSQL: {}", connection);
-
-      let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
-      let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
-      pg_conn as Arc<dyn Queryer>
+      // Default PostgreSQL mode
+      if cli_args.is_tunnel_mode() {
+        // Tunnel mode with default database
+        let db_name = cli_args.get_database_name().map(|s| s.as_str()).unwrap_or("postgres");
+        Self::connect_via_tunnel(cli_args, db_name, &mut tunnel_manager).await?
+      } else {
+        // Direct connection
+        Self::connect_direct(cli_args).await?
+      }
     };
-    // let postgres = crate::sql::Postgres::new(&connection).await?;
 
     Ok(Self {
       tick_rate,
       frame_rate,
       filename: cli_args.filename.clone(),
-      // components: vec![Box::new(home), Box::new(fps)],
       components: vec![Box::new(db)],
       should_quit: false,
       should_suspend: false,
@@ -98,7 +85,90 @@ impl App {
       mode,
       last_tick_key_events: Vec::new(),
       db: db_conn,
+      tunnel_manager,
     })
+  }
+
+  /// Connect directly to PostgreSQL without tunnel
+  async fn connect_direct(cli_args: &crate::cli::Cli) -> Result<Arc<dyn Queryer>> {
+    let app_config_contents = std::str::from_utf8(CONFIG)?;
+    let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
+    let connections =
+      app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
+
+    let connection = cli_args
+      .build_pg_connection_string(connections)
+      .map_err(|e| anyhow!("Failed to build connection string: {}", e))?;
+
+    eprintln!("Connecting to PostgreSQL: {}", connection);
+
+    let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
+    let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
+    Ok(pg_conn as Arc<dyn Queryer>)
+  }
+
+  /// Connect to PostgreSQL via SSH tunnel
+  async fn connect_via_tunnel(
+    cli_args: &crate::cli::Cli,
+    database: &str,
+    tunnel_manager: &mut Option<TunnelManager>,
+  ) -> Result<Arc<dyn Queryer>> {
+    // Validate required parameters
+    let environment =
+      cli_args.environment.as_ref().ok_or_else(|| anyhow!("--env parameter is required when using --tunnel"))?;
+
+    // Create tunnel config
+    let tunnel_config = TunnelConfig {
+      environment: environment.clone(),
+      aws_profile: cli_args.aws_profile.clone(),
+      bastion_user: cli_args.bastion_user.clone(),
+      ssh_key: cli_args.ssh_key.clone(),
+      database_name: database.to_string(),
+      use_session_manager: cli_args.use_session_manager,
+    };
+
+    // Create and establish tunnel
+    let mut tunnel = TunnelManager::new(tunnel_config);
+    let _local_port = tunnel.establish_tunnel().await?;
+
+    // Get connection parameters from config or CLI
+    let app_config_contents = std::str::from_utf8(CONFIG)?;
+    let app_config = toml::from_str::<toml::Value>(app_config_contents)?;
+    let connections = app_config["connections"].as_array();
+
+    // Build connection string for tunneled connection
+    let env_user = std::env::var("PGUSER").ok();
+    let username = cli_args
+      .username
+      .as_ref()
+      .map(|s| s.as_str())
+      .or_else(|| env_user.as_deref())
+      .or_else(|| connections.and_then(|c| c.first()).and_then(|c| c["username"].as_str()))
+      .unwrap_or("postgres");
+
+    let password = if cli_args.password_prompt {
+      eprintln!("Password required for user '{}'", username);
+      crate::cli::Cli::prompt_password_with_paste_support()
+    } else {
+      std::env::var("PGPASSWORD")
+        .ok()
+        .or_else(|| connections.and_then(|c| c.first()).and_then(|c| c["password"].as_str()).map(|s| s.to_string()))
+        .unwrap_or_else(|| {
+          eprintln!("No password found for user '{}'", username);
+          crate::cli::Cli::prompt_password_with_paste_support()
+        })
+    };
+
+    let connection = tunnel.get_connection_string(username, &password, database)?;
+    eprintln!("Connecting to PostgreSQL via tunnel: {}", connection.replace(&password, "***"));
+
+    let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
+    let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
+
+    // Store tunnel manager to keep it alive
+    *tunnel_manager = Some(tunnel);
+
+    Ok(pg_conn as Arc<dyn Queryer>)
   }
 
   pub async fn run(&mut self) -> Result<()> {
@@ -242,6 +312,12 @@ impl App {
       }
     }
     tui.exit()?;
+
+    // Cleanup tunnel if established
+    if let Some(mut tunnel) = self.tunnel_manager.take() {
+      tunnel.cleanup().await?;
+    }
+
     Ok(())
   }
 }

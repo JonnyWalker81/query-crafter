@@ -50,6 +50,11 @@ tui-textarea = "0.6.1"
 ropey = "1.6.0"
 nucleo = "0.5.0"
 
+# AWS SDK dependencies for RDS tunneling
+aws-config = "1.1"
+aws-sdk-ec2 = "1.91"
+aws-sdk-rds = "1.90"
+
 
 [build-dependencies]
 vergen = { version = "8.2.6", features = [ "build", "git", "gitoxide", "cargo" ]}

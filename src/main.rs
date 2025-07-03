@@ -15,6 +15,7 @@ pub mod mode;
 pub mod sql;
 pub mod theme;
 pub mod tui;
+pub mod tunnel;
 pub mod utils;
 
 use clap::Parser;

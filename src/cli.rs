@@ -59,6 +59,25 @@ pub struct Cli {
   // Positional database name (psql compatibility)
   #[arg(value_name = "DBNAME", help = "Database name (if not specified with -d)")]
   pub database: Option<String>,
+
+  // SSH Tunnel options
+  #[arg(long = "tunnel", help = "Enable SSH tunneling through AWS bastion host")]
+  pub tunnel: bool,
+
+  #[arg(short('e'), long = "env", value_name = "ENVIRONMENT", help = "AWS environment (dev, staging, production, etc.)")]
+  pub environment: Option<String>,
+
+  #[arg(long = "aws-profile", value_name = "PROFILE", help = "AWS profile to use (defaults to environment)")]
+  pub aws_profile: Option<String>,
+
+  #[arg(long = "bastion-user", value_name = "USER", help = "SSH user for bastion host", default_value = "ec2-user")]
+  pub bastion_user: String,
+
+  #[arg(long = "ssh-key", value_name = "PATH", help = "Path to SSH private key (uses ssh-agent by default)")]
+  pub ssh_key: Option<String>,
+
+  #[arg(long = "use-session-manager", help = "Force use of AWS Session Manager for SSH connection")]
+  pub use_session_manager: bool,
 }
 
 impl Cli {
@@ -80,6 +99,11 @@ impl Cli {
       || self.get_database_name().is_some()
       || self.connection_string.is_some()
       || self.config_profile.is_some()
+  }
+
+  /// Check if tunnel mode is requested
+  pub fn is_tunnel_mode(&self) -> bool {
+    self.tunnel
   }
 
   /// Build PostgreSQL connection string from CLI args, environment variables, and config
@@ -191,7 +215,7 @@ impl Cli {
   }
 
   /// Prompt for password with better paste support
-  fn prompt_password_with_paste_support() -> String {
+  pub fn prompt_password_with_paste_support() -> String {
     use dialoguer::Password;
 
     // Try dialoguer first (better paste support)
