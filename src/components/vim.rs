@@ -1,3 +1,4 @@
+use clipboard::{ClipboardContext, ClipboardProvider};
 use crossterm::event::KeyEvent;
 use ratatui::widgets::{Block, BorderType, Borders};
 use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
@@ -111,6 +112,38 @@ impl Vim {
             return Transition::Mode(Mode::Insert);
           },
           Input { key: Key::Char('p'), .. } => {
+            // Try to paste from system clipboard first
+            if let Ok(mut ctx) = ClipboardContext::new() {
+              if let Ok(content) = ctx.get_contents() {
+                if !content.is_empty() {
+                  // Move cursor forward first (paste after cursor)
+                  self.textarea.move_cursor(CursorMove::Forward);
+                  // Insert the clipboard content at cursor position
+                  for c in content.chars() {
+                    self.textarea.insert_char(c);
+                  }
+                  return Transition::Mode(Mode::Normal);
+                }
+              }
+            }
+            // Fall back to internal paste if system clipboard fails
+            self.textarea.paste();
+            return Transition::Mode(Mode::Normal);
+          },
+          Input { key: Key::Char('P'), .. } => {
+            // Paste before cursor (capital P)
+            if let Ok(mut ctx) = ClipboardContext::new() {
+              if let Ok(content) = ctx.get_contents() {
+                if !content.is_empty() {
+                  // Insert the clipboard content at cursor position (before)
+                  for c in content.chars() {
+                    self.textarea.insert_char(c);
+                  }
+                  return Transition::Mode(Mode::Normal);
+                }
+              }
+            }
+            // Fall back to internal paste if system clipboard fails
             self.textarea.paste();
             return Transition::Mode(Mode::Normal);
           },
@@ -206,6 +239,12 @@ impl Vim {
           },
           Input { key: Key::Char('y'), ctrl: false, .. } if self.mode == Mode::Visual => {
             self.textarea.copy();
+            // Also copy to system clipboard
+            if let Some(selected) = Vim::get_selected_text(&self.textarea) {
+              if let Ok(mut ctx) = ClipboardContext::new() {
+                let _ = ctx.set_contents(selected);
+              }
+            }
             return Transition::Mode(Mode::Normal);
           },
           Input { key: Key::Char('d'), ctrl: false, .. } if self.mode == Mode::Visual => {
@@ -236,6 +275,12 @@ impl Vim {
         match self.mode {
           Mode::Operator('y') => {
             self.textarea.copy();
+            // Also copy to system clipboard
+            if let Some(selected) = Vim::get_selected_text(&self.textarea) {
+              if let Ok(mut ctx) = ClipboardContext::new() {
+                let _ = ctx.set_contents(selected);
+              }
+            }
             Transition::Mode(Mode::Normal)
           },
           Mode::Operator('d') => {
