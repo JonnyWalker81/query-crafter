@@ -750,7 +750,7 @@ impl Db {
       )
       .style(theme::bg_primary())
       .highlight_symbol("\n▶ ")
-      .highlight_style(theme::selection_active())
+      .row_highlight_style(theme::selection_active())
       .widths((0..VISIBLE_COLUMNS).map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16)).collect::<Vec<_>>());
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
@@ -925,7 +925,7 @@ impl Db {
       )
       .style(theme::bg_primary())
       .highlight_symbol("\n▶ ")
-      .highlight_style(theme::selection_active())
+      .row_highlight_style(theme::selection_active())
       .widths((0..VISIBLE_COLUMNS).map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16)).collect::<Vec<_>>());
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
@@ -971,7 +971,7 @@ impl Db {
         .block(block)
         .style(theme::bg_primary())
         .highlight_symbol("▶ ")
-        .highlight_style(theme::selection_active())
+        .row_highlight_style(theme::selection_active())
         .widths([Constraint::Percentage(30), Constraint::Percentage(70)]);
 
       f.render_stateful_widget(detail_table, area, &mut table_state);
@@ -1094,7 +1094,7 @@ impl Db {
       )
       .style(theme::bg_primary())
       .highlight_symbol("\n▶ ")
-      .highlight_style(Style::default()) // Don't use highlight style in cell mode
+      .row_highlight_style(Style::default()) // Don't use row highlight style in cell mode
       .widths(
         (0..VISIBLE_COLUMNS)
           .map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16))

@@ -143,21 +143,15 @@ impl SqlParser {
 
   fn get_current_word(text: &str) -> String {
     // Find the last word that might be partially typed
-    let chars: Vec<char> = text.chars().collect();
-    let mut end = chars.len();
-
-    // Skip trailing whitespace
-    while end > 0 && chars[end - 1].is_whitespace() {
-      end -= 1;
+    let trimmed = text.trim_end();
+    
+    // If the text ends with whitespace, we're not in the middle of typing a word
+    if text.len() > trimmed.len() {
+      return String::new();
     }
-
-    let mut start = end;
-    // Go back to find the start of the current word
-    while start > 0 && !chars[start - 1].is_whitespace() {
-      start -= 1;
-    }
-
-    chars[start..end].iter().collect()
+    
+    // Otherwise, find the last word
+    trimmed.split_whitespace().last().unwrap_or("").to_string()
   }
 
   fn analyze_complex_context(tokens: &[&str]) -> Option<SqlContext> {
