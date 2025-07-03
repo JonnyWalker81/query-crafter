@@ -5,11 +5,11 @@ target-dir = "target"
 # Number of parallel jobs, defaults to # of CPUs
 jobs = 8
 
-[target.aarch64-unknown-linux-gnu]
-# Use system default linker
-rustflags = [
-  "-C", "target-cpu=native",
-]
+# Enable incremental compilation
+incremental = true
+
+# [target.aarch64-unknown-linux-gnu]
+# Temporarily disable target-specific flags to avoid linker issues
 
 [profile.dev]
 # Faster builds with reasonable runtime performance

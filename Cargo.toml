@@ -1,3 +1,10 @@
+[workspace]
+members = ["."]
+resolver = "2"
+
+[workspace.dependencies]
+# Shared dependencies to ensure consistent versions
+
 [package]
 name = "query-crafter"
 version = "0.1.0"
@@ -5,6 +12,11 @@ edition = "2021"
 description = "TUI for interacting with a database"
 repository = "https://github.com/JonnyWalker81/query-crafter"
 authors = ["Jonathan Rothberg <jon@join.build>"]
+
+# Split the crate into a lib and bin to improve compilation caching
+[[bin]]
+name = "query-crafter"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -47,9 +59,9 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter", "serde"] }
 tui-textarea = "0.6.1"
 ropey = "1.6.0"
-nucleo = "0.5.0"
+nucleo = "0.5"
 
-# AWS SDK dependencies for RDS tunneling
+# AWS SDK dependencies
 aws-config = "1.1"
 aws-sdk-ec2 = "1.91"
 aws-sdk-rds = "1.90"
@@ -60,3 +72,11 @@ aws-sdk-rds = "1.90"
 [features]
 default = ["tui-textarea-editor"]
 tui-textarea-editor = []
+# zep-editor = []
+
+# Optimize compile times for dev builds
+[profile.dev]
+# Use the config in .cargo/config.toml
+
+[profile.release]
+# Use the config in .cargo/config.toml

@@ -61,131 +61,158 @@ impl Theme {
   // Component-specific styles
 
   /// Main application background
+  #[inline]
   pub fn bg_primary() -> Style {
     Style::default().bg(Self::BG_PRIMARY).fg(Self::FG_PRIMARY)
   }
 
   /// Secondary panel background
+  #[inline]
   pub fn bg_secondary() -> Style {
     Style::default().bg(Self::BG_SECONDARY).fg(Self::FG_PRIMARY)
   }
 
   /// Input field styling
+  #[inline]
   pub fn input() -> Style {
     Style::default().bg(Self::BG_TERTIARY).fg(Self::FG_PRIMARY)
   }
 
   /// Selection/highlight styling
+  #[inline]
   pub fn selection() -> Style {
     Style::default().bg(Self::BG_SELECTION).fg(Self::FG_PRIMARY).add_modifier(Modifier::BOLD)
   }
 
   /// Active selection with accent color
+  #[inline]
   pub fn selection_active() -> Style {
     Style::default().bg(Self::ACCENT_BLUE).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
   }
 
   /// Normal border styling
+  #[inline]
   pub fn border_normal() -> Style {
     Style::default().fg(Self::BORDER_NORMAL)
   }
 
   /// Focused border styling
+  #[inline]
   pub fn border_focused() -> Style {
     Style::default().fg(Self::BORDER_FOCUSED)
   }
 
   /// Header styling for tables
+  #[inline]
   pub fn header() -> Style {
-    Style::default().bg(Self::BG_SELECTION).fg(Self::ACCENT_CYAN).add_modifier(Modifier::BOLD)
+    Style::default().bg(Self::BG_SELECTION).fg(Self::ACCENT_CYAN).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
   }
 
   /// Title styling
+  #[inline]
   pub fn title() -> Style {
     Style::default().fg(Self::ACCENT_BLUE).add_modifier(Modifier::BOLD)
   }
 
   /// Success message styling
+  #[inline]
   pub fn success() -> Style {
     Style::default().fg(Self::SUCCESS).add_modifier(Modifier::BOLD)
   }
 
   /// Warning message styling  
+  #[inline]
   pub fn warning() -> Style {
     Style::default().fg(Self::WARNING).add_modifier(Modifier::BOLD)
   }
 
   /// Error message styling
+  #[inline]
   pub fn error() -> Style {
     Style::default().fg(Self::ERROR).add_modifier(Modifier::BOLD)
   }
 
   /// Info message styling
+  #[inline]
   pub fn info() -> Style {
     Style::default().fg(Self::INFO)
   }
 
   /// Muted text styling
+  #[inline]
   pub fn muted() -> Style {
     Style::default().fg(Self::FG_SECONDARY)
   }
 
   /// Line numbers styling
+  #[inline]
   pub fn line_numbers() -> Style {
     Style::default().fg(Self::FG_TERTIARY)
   }
 
   /// Tab styling - normal
+  #[inline]
   pub fn tab_normal() -> Style {
     Style::default().fg(Self::FG_SECONDARY)
   }
 
   /// Tab styling - selected
+  #[inline]
   pub fn tab_selected() -> Style {
     Style::default().fg(Self::ACCENT_BLUE).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
   }
 
   /// Status bar styling
+  #[inline]
   pub fn status_bar() -> Style {
     Style::default().bg(Self::BG_SECONDARY).fg(Self::FG_PRIMARY)
   }
 
   // Mode-specific cursor styles for vim editor
 
+  #[inline]
   pub fn cursor_normal() -> Style {
     Style::default().bg(Self::ACCENT_ORANGE).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
   }
 
+  #[inline]
   pub fn cursor_insert() -> Style {
     Style::default().bg(Self::ACCENT_GREEN).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
   }
 
+  #[inline]
   pub fn cursor_visual() -> Style {
     Style::default().bg(Self::ACCENT_PURPLE).fg(Self::BG_PRIMARY).add_modifier(Modifier::BOLD)
   }
 
   // Syntax highlighting for SQL
 
+  #[inline]
   pub fn sql_keyword() -> Style {
     Style::default().fg(Self::ACCENT_PURPLE).add_modifier(Modifier::BOLD)
   }
 
+  #[inline]
   pub fn sql_function() -> Style {
     Style::default().fg(Self::ACCENT_BLUE)
   }
 
+  #[inline]
   pub fn sql_string() -> Style {
     Style::default().fg(Self::ACCENT_GREEN)
   }
 
+  #[inline]
   pub fn sql_number() -> Style {
     Style::default().fg(Self::ACCENT_ORANGE)
   }
 
+  #[inline]
   pub fn sql_comment() -> Style {
     Style::default().fg(Self::FG_SECONDARY)
   }
 
+  #[inline]
   pub fn sql_operator() -> Style {
     Style::default().fg(Self::ACCENT_CYAN)
   }
@@ -231,6 +258,7 @@ pub mod style {
   use super::*;
 
   /// Creates a modern button style
+  #[inline]
   pub fn button(active: bool) -> Style {
     if active {
       Theme::selection_active()
@@ -240,6 +268,7 @@ pub mod style {
   }
 
   /// Creates a modern list item style
+  #[inline]
   pub fn list_item(selected: bool) -> Style {
     if selected {
       Theme::selection_active()
@@ -249,6 +278,7 @@ pub mod style {
   }
 
   /// Creates a modern table row style
+  #[inline]
   pub fn table_row(selected: bool) -> Style {
     if selected {
       Theme::selection()
@@ -258,6 +288,7 @@ pub mod style {
   }
 
   /// Creates a modern border style based on focus state
+  #[inline]
   pub fn border(focused: bool) -> Style {
     if focused {
       Theme::border_focused()
