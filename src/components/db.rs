@@ -24,7 +24,7 @@ use super::{Component, ComponentKind, Frame};
 use crate::{
   action::Action,
   autocomplete::{AutocompleteProvider, AutocompleteState},
-  components::{vim::Vim, zep_editor::ZepEditor},
+  components::vim::Vim,
   config::Config,
   editor_common::Mode,
   editor_component::EditorComponent,
@@ -43,7 +43,6 @@ pub enum SelectionMode {
 #[derive(Debug)]
 pub enum EditorBackend {
   TuiTextarea(Vim),
-  Zep(ZepEditor),
 }
 
 impl Default for EditorBackend {
@@ -53,66 +52,57 @@ impl Default for EditorBackend {
 }
 
 impl EditorBackend {
-  pub fn new_from_config(backend_name: &str) -> Self {
-    match backend_name {
-      "zep" => Self::Zep(ZepEditor::default()),
-      _ => Self::TuiTextarea(Vim::new(Mode::Normal)),
-    }
+  pub fn new_from_config(_backend_name: &str) -> Self {
+    // For now, always use TuiTextarea
+    // In the future, match on backend_name to support different editors
+    Self::TuiTextarea(Vim::new(Mode::Normal))
   }
 
   pub fn as_editor_component(&mut self) -> &mut dyn EditorComponent {
     match self {
       Self::TuiTextarea(vim) => vim,
-      Self::Zep(zep) => zep,
     }
   }
 
   pub fn get_text(&self) -> String {
     match self {
       Self::TuiTextarea(vim) => vim.get_text(),
-      Self::Zep(zep) => zep.get_text(),
     }
   }
 
   pub fn get_selected_text(&self) -> Option<String> {
     match self {
       Self::TuiTextarea(vim) => vim.get_selected_text(),
-      Self::Zep(zep) => zep.get_selected_text(),
     }
   }
 
   pub fn set_text(&mut self, text: &str) {
     match self {
       Self::TuiTextarea(vim) => vim.set_text(text),
-      Self::Zep(zep) => zep.set_text(text),
     }
   }
 
   pub fn get_cursor_position(&self) -> (usize, usize) {
     match self {
       Self::TuiTextarea(vim) => vim.get_cursor_position(),
-      Self::Zep(_) => (0, 0), // TODO: implement for Zep
     }
   }
 
   pub fn get_text_up_to_cursor(&self) -> String {
     match self {
       Self::TuiTextarea(vim) => vim.get_text_up_to_cursor(),
-      Self::Zep(_) => String::new(), // TODO: implement for Zep
     }
   }
 
   pub fn insert_text_at_cursor(&mut self, text: &str) {
     match self {
       Self::TuiTextarea(vim) => vim.insert_text_at_cursor(text),
-      Self::Zep(_) => {}, // TODO: implement for Zep
     }
   }
 
   pub fn delete_word_before_cursor(&mut self) {
     match self {
       Self::TuiTextarea(vim) => vim.delete_word_before_cursor(),
-      Self::Zep(_) => {}, // TODO: implement for Zep
     }
   }
 
@@ -120,7 +110,6 @@ impl EditorBackend {
   pub fn mode(&self) -> Mode {
     match self {
       Self::TuiTextarea(vim) => vim.mode(),
-      Self::Zep(zep) => zep.mode(), // Use Zep's actual mode
     }
   }
 
@@ -128,10 +117,6 @@ impl EditorBackend {
     match self {
       Self::TuiTextarea(vim) => {
         *vim = Vim::new(mode);
-      },
-      Self::Zep(_) => {
-        // Zep handles mode transitions through key events
-        // This is a compatibility shim - ideally we'd refactor to not need this
       },
     }
   }
@@ -1269,7 +1254,6 @@ impl Component for Db {
     // Check if editor backend has changed
     let current_backend_name = match &self.editor_backend {
       EditorBackend::TuiTextarea(_) => "tui-textarea",
-      EditorBackend::Zep(_) => "zep",
     };
 
     if current_backend_name != config.editor.backend {

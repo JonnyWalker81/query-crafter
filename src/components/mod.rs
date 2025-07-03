@@ -3,7 +3,6 @@ pub mod db;
 pub mod fps;
 pub mod home;
 pub mod vim;
-pub mod zep_editor;
 
 use color_eyre::eyre::Result;
 use crossterm::event::KeyEvent;

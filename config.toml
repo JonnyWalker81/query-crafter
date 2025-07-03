@@ -1,7 +1,7 @@
 # Editor configuration
-# Choose editor backend: "tui-textarea" or "zep"
+# Choose editor backend: "tui-textarea" (more backends can be added in the future)
 [editor]
-backend = "zep"
+backend = "tui-textarea"
 
 # Database connections
 [[connections]]
