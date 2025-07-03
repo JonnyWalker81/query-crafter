@@ -63,10 +63,7 @@ nucleo = "0.5"
 once_cell = "1.19"
 query-crafter-theme = { path = "query-crafter-theme" }
 
-# AWS SDK dependencies
-aws-config = "1.1"
-aws-sdk-ec2 = "1.91"
-aws-sdk-rds = "1.90"
+# AWS SDK dependencies removed - using AWS CLI instead for faster compilation
 
 
 [build-dependencies]
@@ -74,7 +71,6 @@ aws-sdk-rds = "1.90"
 [features]
 default = ["tui-textarea-editor"]
 tui-textarea-editor = []
-# zep-editor = []
 
 # Optimize compile times for dev builds
 [profile.dev]

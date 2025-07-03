@@ -9,7 +9,6 @@ pub mod editor_common;
 pub mod editor_component;
 pub mod mode;
 pub mod sql;
-pub mod theme;
 pub mod tui;
 pub mod tunnel;
 pub mod utils;

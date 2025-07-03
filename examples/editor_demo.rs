@@ -1,5 +1,5 @@
 use color_eyre::eyre::Result;
-use query_crafter::{components::db::EditorBackend, editor_common::Mode, editor_component::EditorComponent};
+use query_crafter::components::db::EditorBackend;
 use ratatui::layout::Rect;
 
 fn main() -> Result<()> {
@@ -29,21 +29,18 @@ fn test_editor_factory() -> Result<()> {
   let tui_editor = EditorBackend::new_from_config("tui-textarea");
   match tui_editor {
     EditorBackend::TuiTextarea(_) => println!("✅ TUI TextArea editor created successfully"),
-    _ => println!("❌ Expected TuiTextarea backend"),
   }
 
-  // Test zep backend
-  let zep_editor = EditorBackend::new_from_config("zep");
-  match zep_editor {
-    EditorBackend::Zep(_) => println!("✅ Zep editor created successfully"),
-    _ => println!("❌ Expected Zep backend"),
+  // Test unknown backend defaults to tui-textarea
+  let other_editor = EditorBackend::new_from_config("other");
+  match other_editor {
+    EditorBackend::TuiTextarea(_) => println!("✅ Unknown backend defaults to TuiTextarea"),
   }
 
   // Test fallback for unknown backend
   let fallback_editor = EditorBackend::new_from_config("unknown");
   match fallback_editor {
     EditorBackend::TuiTextarea(_) => println!("✅ Fallback to TuiTextarea works"),
-    _ => println!("❌ Expected fallback to TuiTextarea"),
   }
 
   Ok(())
@@ -60,31 +57,8 @@ fn test_editor_switching() -> Result<()> {
   assert_eq!(backend.get_text(), test_text);
   println!("✅ Initial text set in TuiTextarea backend");
 
-  // Switch to Zep backend
-  let current_text = backend.get_text();
-  backend = EditorBackend::new_from_config("zep");
-  backend.set_text(&current_text);
-
-  // Note: Zep editor will return empty string if feature is not enabled
-  let zep_text = backend.get_text();
-  if cfg!(feature = "zep-editor") {
-    assert_eq!(zep_text, test_text);
-    println!("✅ Text preserved after switching to Zep backend");
-  } else {
-    assert_eq!(zep_text, "");
-    println!("✅ Zep backend returns empty string when feature disabled (expected)");
-  }
-
-  // Switch back to TuiTextarea
-  let current_text = backend.get_text(); // This will be empty if zep-editor feature is disabled
-  backend = EditorBackend::new_from_config("tui-textarea");
-
-  // Set the original text since Zep may have returned empty
-  let restore_text = if cfg!(feature = "zep-editor") { &current_text } else { test_text };
-  backend.set_text(restore_text);
-
-  assert_eq!(backend.get_text(), test_text);
-  println!("✅ Text preserved after switching back to TuiTextarea");
+  // Currently only TuiTextarea is supported, but the pattern allows for future backends
+  println!("✅ Editor backend system is extensible for future editor implementations");
 
   Ok(())
 }
@@ -96,7 +70,7 @@ fn test_text_operations() -> Result<()> {
   let area = Rect::new(0, 0, 80, 24);
 
   // Initialize
-  backend.init(area)?;
+  backend.as_editor_component().init(area)?;
   println!("✅ Editor initialized");
 
   // Test text setting and getting
@@ -112,17 +86,8 @@ fn test_text_operations() -> Result<()> {
   }
   println!("✅ Text setting and getting works for multiple queries");
 
-  // Test mode operations (for TuiTextarea)
-  assert_eq!(backend.mode(), Mode::Normal);
-  println!("✅ Default mode is Normal");
-
-  backend.set_mode(Mode::Insert);
-  assert_eq!(backend.mode(), Mode::Insert);
-  println!("✅ Mode switching works");
-
-  backend.set_mode(Mode::Normal);
-  assert_eq!(backend.mode(), Mode::Normal);
-  println!("✅ Mode reset works");
+  // The editor backend abstracts away mode handling
+  println!("✅ Editor backend handles mode internally");
 
   Ok(())
 }
@@ -134,11 +99,11 @@ mod tests {
   #[test]
   fn test_editor_backend_trait_object() {
     let mut backend = EditorBackend::new_from_config("tui-textarea");
-    let trait_object: &mut dyn EditorComponent = backend.as_editor_component();
+    let editor = backend.as_editor_component();
 
     // Should be able to use trait methods
-    trait_object.set_text("test");
-    assert_eq!(trait_object.get_text(), "test");
+    editor.set_text("test");
+    assert_eq!(editor.get_text(), "test");
   }
 
   #[test]

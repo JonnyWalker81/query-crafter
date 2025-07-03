@@ -6,10 +6,10 @@ use ratatui::{
   widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
-use crate::{
-  autocomplete::{AutocompleteState, SuggestionItem, SuggestionKind},
-  theme::Theme,
-};
+use crate::autocomplete::{AutocompleteState, SuggestionItem, SuggestionKind};
+
+// Import theme directly from external crate
+use query_crafter_theme as theme;
 
 /// Widget for rendering autocomplete suggestions in a popup
 pub struct AutocompletePopup<'a> {
@@ -53,7 +53,7 @@ impl<'a> AutocompletePopup<'a> {
     );
 
     // Determine popup position (prefer below cursor, but above if not enough space)
-    let popup_y = if cursor_y + popup_height + 1 <= parent_area.bottom() {
+    let popup_y = if cursor_y + popup_height < parent_area.bottom() {
       // Show below cursor
       cursor_y + 1
     } else if cursor_y >= popup_height {
@@ -106,17 +106,17 @@ impl<'a> AutocompletePopup<'a> {
 
   fn get_suggestion_style(&self, _index: usize, is_selected: bool) -> Style {
     if is_selected {
-      Theme::selection_active()
+      theme::selection_active()
     } else {
-      Style::default().fg(Theme::FG_PRIMARY)
+      Style::default().fg(theme::FG_PRIMARY)
     }
   }
 
   fn get_kind_color(&self, kind: &SuggestionKind) -> Color {
     match kind {
-      SuggestionKind::Table => Theme::ACCENT_BLUE,
-      SuggestionKind::Column => Theme::ACCENT_GREEN,
-      SuggestionKind::Keyword => Theme::ACCENT_PURPLE,
+      SuggestionKind::Table => theme::ACCENT_BLUE,
+      SuggestionKind::Column => theme::ACCENT_GREEN,
+      SuggestionKind::Keyword => theme::ACCENT_PURPLE,
     }
   }
 }
@@ -134,8 +134,8 @@ impl<'a> Widget for AutocompletePopup<'a> {
     let block = Block::default()
       .borders(Borders::ALL)
       .border_type(BorderType::Rounded)
-      .border_style(Theme::border_focused())
-      .style(Theme::bg_secondary())
+      .border_style(theme::border_focused())
+      .style(theme::bg_secondary())
       .title(" Autocomplete ");
 
     let inner_area = block.inner(area);
@@ -160,8 +160,8 @@ impl<'a> Widget for AutocompletePopup<'a> {
             if let Some(table) = &suggestion.table_context {
               vec![
                 Span::styled("📊 ", icon_style),
-                Span::styled(table, Style::default().fg(Theme::FG_SECONDARY)),
-                Span::styled(".", Style::default().fg(Theme::FG_SECONDARY)),
+                Span::styled(table, Style::default().fg(theme::FG_SECONDARY)),
+                Span::styled(".", Style::default().fg(theme::FG_SECONDARY)),
                 Span::styled(&suggestion.text, style),
               ]
             } else {
@@ -177,7 +177,7 @@ impl<'a> Widget for AutocompletePopup<'a> {
 
     // Create the list widget
     let list =
-      List::new(items).style(Theme::bg_secondary()).highlight_style(Theme::selection_active()).highlight_symbol("▶ ");
+      List::new(items).style(theme::bg_secondary()).highlight_style(theme::selection_active()).highlight_symbol("▶ ");
 
     // Create list state for proper rendering
     let mut list_state = ListState::default();
@@ -197,7 +197,7 @@ impl<'a> Widget for AutocompletePopup<'a> {
 
       let help_text = "↑↓: Navigate • Enter/Tab: Accept • Esc: Cancel";
       let help_paragraph =
-        Paragraph::new(help_text).style(Style::default().fg(Theme::FG_SECONDARY)).wrap(Wrap { trim: true });
+        Paragraph::new(help_text).style(Style::default().fg(theme::FG_SECONDARY)).wrap(Wrap { trim: true });
 
       help_paragraph.render(help_area, buf);
     }

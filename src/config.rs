@@ -20,8 +20,44 @@ fn load_default_config() -> Result<String> {
         // Return default config if file doesn't exist
         Ok(String::from(r#"{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "editor": {
+    "backend": "tui-textarea"
+  },
   "keybindings": {
-    "Home": {}
+    "Home": {
+      "<k>": "TableMoveUp",
+      "<j>": "TableMoveDown",
+      "<up>": "TableMoveUp",
+      "<down>": "TableMoveDown",
+      "<enter>": "LoadSelectedTable",
+      "<tab>": "FocusQuery",
+      "<Ctrl-q>": "Quit",
+      "<Ctrl-d>": "Quit",
+      "<Ctrl-c>": "Quit",
+      "<Ctrl-z>": "Suspend"
+    },
+    "Query": {
+      "<Ctrl-y>": "ExecuteQuery",
+      "<Ctrl-enter>": "ExecuteQuery",
+      "<F5>": "ExecuteQuery",
+      "<Ctrl-e>": "ExecuteQuery",
+      "<Ctrl-u>": "ClearQuery",
+      "<Ctrl-q>": "Quit",
+      "<tab>": "FocusResults"
+    },
+    "Results": {
+      "<k>": "RowMoveUp",
+      "<j>": "RowMoveDown",
+      "<h>": "ScrollTableLeft",
+      "<l>": "ScrollTableRight",
+      "<up>": "RowMoveUp",
+      "<down>": "RowMoveDown",
+      "<left>": "ScrollTableLeft",
+      "<right>": "ScrollTableRight",
+      "<enter>": "RowDetails",
+      "<Ctrl-q>": "Quit",
+      "<tab>": "FocusHome"
+    }
   }
 }"#))
     }
@@ -79,7 +115,7 @@ impl Config {
     for (file, format) in &config_files {
       builder = builder.add_source(config::File::from(config_dir.join(file)).format(*format).required(false));
       if config_dir.join(file).exists() {
-        eprintln!("Found configuration file: {}", file);
+        eprintln!("Found configuration file: {file}");
         found_config = true
       }
     }

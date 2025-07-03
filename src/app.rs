@@ -16,6 +16,21 @@ use crate::{
   tunnel::{TunnelConfig, TunnelManager},
 };
 
+const DEFAULT_CONFIG: &str = r#"# Editor configuration
+[editor]
+backend = "tui-textarea"
+
+# Database connections
+# Add your database connections here
+# [[connections]]
+# host = "localhost"
+# port = 5432
+# username = "postgres"
+# password = "password"
+# database = "postgres"
+# sslmode = "prefer"
+"#;
+
 pub struct App {
   pub config: Config,
   pub tick_rate: f64,
@@ -32,19 +47,53 @@ pub struct App {
 
 // Load config at runtime to prevent constant rebuilds
 fn load_config_toml() -> Result<String> {
-    use color_eyre::eyre::Context;
+    // Try locations in order:
+    // 1. Current directory (for development)
+    if let Ok(content) = std::fs::read_to_string("config.toml") {
+        return Ok(content);
+    }
     
-    std::fs::read_to_string("config.toml")
-        .or_else(|_| {
-            // Fallback to executable directory
-            if let Ok(exe_path) = std::env::current_exe() {
-                if let Some(exe_dir) = exe_path.parent() {
-                    return std::fs::read_to_string(exe_dir.join("config.toml"))
-                        .context("Failed to read config.toml from executable directory");
+    // 2. User config directory
+    if let Some(proj_dirs) = directories::ProjectDirs::from("com", "query-crafter", "query-crafter") {
+        let config_dir = proj_dirs.config_dir();
+        let config_path = config_dir.join("config.toml");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            return Ok(content);
+        }
+        
+        // Create config directory and default config if it doesn't exist
+        if !config_dir.exists() {
+            if let Err(e) = std::fs::create_dir_all(config_dir) {
+                eprintln!("Warning: Could not create config directory: {e}");
+            } else {
+                // Try to write default config
+                if let Err(e) = std::fs::write(&config_path, DEFAULT_CONFIG) {
+                    eprintln!("Warning: Could not create default config.toml: {e}");
+                } else {
+                    eprintln!("Created default config at: {}", config_path.display());
+                    eprintln!("Please edit this file to add your database connections.");
+                    return Ok(DEFAULT_CONFIG.to_string());
                 }
             }
-            Err(color_eyre::eyre::eyre!("config.toml not found"))
-        })
+        }
+    }
+    
+    // 3. System config directory
+    if let Ok(content) = std::fs::read_to_string("/etc/query-crafter/config.toml") {
+        return Ok(content);
+    }
+    
+    // 4. Executable directory (for portable installs)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            if let Ok(content) = std::fs::read_to_string(exe_dir.join("config.toml")) {
+                return Ok(content);
+            }
+        }
+    }
+    
+    // 5. Return default config if none found
+    Ok(DEFAULT_CONFIG.to_string())
 }
 
 impl App {
@@ -58,13 +107,13 @@ impl App {
     let db_conn = if cli_args.is_sqlite_mode() {
       // SQLite mode - using -f/--file flag
       let filename = cli_args.filename.as_ref().unwrap();
-      eprintln!("Connecting to SQLite database: {}", filename);
+      eprintln!("Connecting to SQLite database: {filename}");
       let sqlite_conn = Arc::new(crate::sql::Sqlite::new(filename).await?);
       sqlite_conn as Arc<dyn Queryer>
     } else if let Some(db_name) = cli_args.get_database_name() {
       // Check if database name looks like a file path (contains .db, .sqlite, or path separators)
       if db_name.contains(".db") || db_name.contains(".sqlite") || db_name.contains("/") || db_name.contains("\\") {
-        eprintln!("Detected SQLite database file from positional argument: {}", db_name);
+        eprintln!("Detected SQLite database file from positional argument: {db_name}");
         let sqlite_conn = Arc::new(crate::sql::Sqlite::new(db_name).await?);
         sqlite_conn as Arc<dyn Queryer>
       } else {
@@ -108,14 +157,22 @@ impl App {
   async fn connect_direct(cli_args: &crate::cli::Cli) -> Result<Arc<dyn Queryer>> {
     let app_config_contents = load_config_toml()?;
     let app_config = toml::from_str::<toml::Value>(&app_config_contents)?;
-    let connections =
-      app_config["connections"].as_array().ok_or_else(|| anyhow!("No connections found in config.toml"))?;
+    let connections = app_config.get("connections")
+      .and_then(|c| c.as_array())
+      .ok_or_else(|| {
+        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "query-crafter", "query-crafter") {
+          let config_path = proj_dirs.config_dir().join("config.toml");
+          anyhow!("No database connections found in config.toml. Please add connections to: {}", config_path.display())
+        } else {
+          anyhow!("No database connections found in config.toml")
+        }
+      })?;
 
     let connection = cli_args
       .build_pg_connection_string(connections)
-      .map_err(|e| anyhow!("Failed to build connection string: {}", e))?;
+      .map_err(|e| anyhow!("Failed to build connection string: {e}"))?;
 
-    eprintln!("Connecting to PostgreSQL: {}", connection);
+    eprintln!("Connecting to PostgreSQL: {connection}");
 
     let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
     let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
@@ -155,21 +212,20 @@ impl App {
     let env_user = std::env::var("PGUSER").ok();
     let username = cli_args
       .username
-      .as_ref()
-      .map(|s| s.as_str())
-      .or_else(|| env_user.as_deref())
+      .as_deref()
+      .or(env_user.as_deref())
       .or_else(|| connections.and_then(|c| c.first()).and_then(|c| c["username"].as_str()))
       .unwrap_or("postgres");
 
     let password = if cli_args.password_prompt {
-      eprintln!("Password required for user '{}'", username);
+      eprintln!("Password required for user '{username}'");
       crate::cli::Cli::prompt_password_with_paste_support()
     } else {
       std::env::var("PGPASSWORD")
         .ok()
         .or_else(|| connections.and_then(|c| c.first()).and_then(|c| c["password"].as_str()).map(|s| s.to_string()))
         .unwrap_or_else(|| {
-          eprintln!("No password found for user '{}'", username);
+          eprintln!("No password found for user '{username}'");
           crate::cli::Cli::prompt_password_with_paste_support()
         })
     };

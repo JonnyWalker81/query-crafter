@@ -2,7 +2,6 @@ use ratatui::style::{Color, Modifier, Style};
 
 /// Const theme implementation that can be evaluated at compile time
 /// This reduces recompilation cascades when theme values change
-
 // Color constants
 pub const ACCENT_BLUE: Color = Color::Rgb(97, 175, 239);
 pub const ACCENT_CYAN: Color = Color::Rgb(86, 182, 194);

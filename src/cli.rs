@@ -115,8 +115,14 @@ impl Cli {
 
     // Determine which config profile to use
     let profile_index = self.config_profile.unwrap_or(0);
-    let config_conn =
-      config_connections.get(profile_index).ok_or_else(|| format!("Config profile {} not found", profile_index))?;
+    
+    // Check if there are any connections defined
+    if config_connections.is_empty() {
+      return Err("No database connections defined in config.toml. Please add at least one connection.".to_string());
+    }
+    
+    let config_conn = config_connections.get(profile_index)
+      .ok_or_else(|| format!("Config profile {} not found (only {} connections defined)", profile_index, config_connections.len()))?;
 
     // Get environment variables
     let env_host = std::env::var("PGHOST").ok();
@@ -128,32 +134,30 @@ impl Cli {
     // Build connection parameters with CLI > ENV > CONFIG priority
     let host = self
       .host
-      .as_ref()
-      .map(|s| s.as_str())
-      .or_else(|| env_host.as_deref())
-      .or_else(|| config_conn["host"].as_str())
+      .as_deref()
+      .or(env_host.as_deref())
+      .or_else(|| config_conn.get("host").and_then(|v| v.as_str()))
       .unwrap_or("localhost");
 
-    let port = self.port.or(env_port).or_else(|| config_conn["port"].as_integer().map(|i| i as u16)).unwrap_or(5432);
+    let port = self.port.or(env_port).or_else(|| config_conn.get("port").and_then(|v| v.as_integer()).map(|i| i as u16)).unwrap_or(5432);
 
     let username = self
       .username
-      .as_ref()
-      .map(|s| s.as_str())
-      .or_else(|| env_user.as_deref())
-      .or_else(|| config_conn["username"].as_str())
+      .as_deref()
+      .or(env_user.as_deref())
+      .or_else(|| config_conn.get("username").and_then(|v| v.as_str()))
       .unwrap_or("postgres");
 
     let database = self
       .get_database_name()
       .map(|s| s.as_str())
-      .or_else(|| env_database.as_deref())
-      .or_else(|| config_conn["database"].as_str())
+      .or(env_database.as_deref())
+      .or_else(|| config_conn.get("database").and_then(|v| v.as_str()))
       .unwrap_or("postgres");
 
     let password = if self.password_prompt {
       // Force password prompt
-      eprintln!("Password required for user '{}'", username);
+      eprintln!("Password required for user '{username}'");
       Self::prompt_password_with_paste_support()
     } else {
       // Check if any CLI parameters were provided (indicating user wants custom connection)
@@ -166,7 +170,7 @@ impl Cli {
         // When using CLI params without env password, don't fall back to config password
         None
       } else {
-        config_conn["password"].as_str().map(|s| s.to_string())
+        config_conn.get("password").and_then(|v| v.as_str()).map(|s| s.to_string())
       };
 
       let existing_password = env_password.or(config_password);
@@ -175,7 +179,7 @@ impl Cli {
         Some(pwd) if !pwd.is_empty() => pwd,
         _ => {
           // No password available, prompt for it
-          eprintln!("No password found in environment or config for user '{}'", username);
+          eprintln!("No password found in environment or config for user '{username}'");
           Self::prompt_password_with_paste_support()
         },
       }
@@ -184,31 +188,30 @@ impl Cli {
     // Get SSL mode with priority: CLI > ENV > CONFIG > default
     let sslmode = self
       .sslmode
-      .as_ref()
-      .map(|s| s.clone())
+      .clone()
       .or_else(|| std::env::var("PGSSLMODE").ok())
-      .or_else(|| config_conn["sslmode"].as_str().map(|s| s.to_string()))
+      .or_else(|| config_conn.get("sslmode").and_then(|v| v.as_str()).map(|s| s.to_string()))
       .unwrap_or_else(|| "prefer".to_string());
 
     // Validate SSL mode
     let valid_sslmodes = ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"];
     if !valid_sslmodes.contains(&sslmode.as_str()) {
-      return Err(format!("Invalid SSL mode '{}'. Valid options: {}", sslmode, valid_sslmodes.join(", ")));
+      return Err(format!("Invalid SSL mode '{sslmode}'. Valid options: {}", valid_sslmodes.join(", ")));
     }
 
     // Build connection string
     let connection_string = if password.is_empty() {
-      format!("postgresql://{}@{}:{}/{}?sslmode={}", username, host, port, database, sslmode)
+      format!("postgresql://{username}@{host}:{port}/{database}?sslmode={sslmode}")
     } else {
-      format!("postgresql://{}:{}@{}:{}/{}?sslmode={}", username, password, host, port, database, sslmode)
+      format!("postgresql://{username}:{password}@{host}:{port}/{database}?sslmode={sslmode}")
     };
 
     eprintln!("Using connection parameters:");
-    eprintln!("  Host: {}", host);
-    eprintln!("  Port: {}", port);
-    eprintln!("  Username: {}", username);
-    eprintln!("  Database: {}", database);
-    eprintln!("  SSL Mode: {}", sslmode);
+    eprintln!("  Host: {host}");
+    eprintln!("  Port: {port}");
+    eprintln!("  Username: {username}");
+    eprintln!("  Database: {database}");
+    eprintln!("  SSL Mode: {sslmode}");
     eprintln!("  Password: {}", if password.is_empty() { "No" } else { "Yes" });
 
     Ok(connection_string)

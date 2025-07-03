@@ -29,6 +29,7 @@ use crate::{
   editor_common::Mode,
   editor_component::EditorComponent,
 };
+use query_crafter_theme as theme;
 
 const VISIBLE_COLUMNS: usize = 3;
 
@@ -154,7 +155,7 @@ impl QueryHistoryEntry {
   pub fn formatted_time(&self) -> String {
     // Convert timestamp to readable format
     let datetime = UNIX_EPOCH + Duration::from_secs(self.timestamp);
-    format!("{:?}", datetime)
+    format!("{datetime:?}")
       .split_once('.')
       .map(|(date_time, _)| date_time.replace("SystemTime { tv_sec: ", "").replace(", tv_nsec: 0 }", ""))
       .unwrap_or_else(|| "Unknown".to_string())
@@ -413,17 +414,15 @@ impl Db {
       } else {
         String::new()
       }
+    } else if let Some(row) = self.query_results.get(actual_row_index) {
+      let row_data =
+        row.iter().zip(self.selected_headers.iter()).fold(BTreeMap::new(), |mut acc, (value, header)| {
+          acc.insert(header, value);
+          acc
+        });
+      serde_json::to_string_pretty(&row_data).unwrap()
     } else {
-      if let Some(row) = self.query_results.get(actual_row_index) {
-        let row_data =
-          row.iter().zip(self.selected_headers.iter()).fold(BTreeMap::new(), |mut acc, (value, header)| {
-            acc.insert(header, value);
-            acc
-          });
-        serde_json::to_string_pretty(&row_data).unwrap()
-      } else {
-        String::new()
-      }
+      String::new()
     };
 
     Some(json_str)
@@ -473,9 +472,9 @@ impl Db {
     let is_focused = self.selected_component == ComponentKind::Home;
     let tables = Block::default()
       .borders(Borders::ALL)
-      .style(if is_focused { crate::theme::Theme::border_focused() } else { crate::theme::Theme::border_normal() })
+      .style(if is_focused { theme::border_focused() } else { theme::border_normal() })
       .title("[1] Tables")
-      .title_style(crate::theme::Theme::title())
+      .title_style(theme::title())
       .border_type(BorderType::Rounded);
 
     let table_list_chunks = if self.is_searching_tables {
@@ -491,13 +490,13 @@ impl Db {
       let search_block = Block::default()
         .borders(Borders::ALL)
         .title("Search")
-        .title_style(crate::theme::Theme::title())
-        .border_style(crate::theme::Theme::border_focused())
+        .title_style(theme::title())
+        .border_style(theme::border_focused())
         .border_type(BorderType::Rounded);
       let search_text =
-        Paragraph::new(Text::styled(self.table_search_query.to_string(), crate::theme::Theme::warning()))
+        Paragraph::new(Text::styled(self.table_search_query.to_string(), theme::warning()))
           .block(search_block)
-          .style(crate::theme::Theme::input());
+          .style(theme::input());
       f.render_widget(search_text, table_list_chunks[0]);
     }
 
@@ -507,9 +506,9 @@ impl Db {
     if self.tables.is_empty() && self.is_searching_tables && !self.table_search_query.is_empty() {
       // Show "No tables found" message for empty search results
       let no_results_msg = format!("No tables found matching '{}'", self.table_search_query);
-      let no_results = Paragraph::new(Text::styled(no_results_msg, crate::theme::Theme::warning()))
+      let no_results = Paragraph::new(Text::styled(no_results_msg, theme::warning()))
         .block(tables)
-        .style(crate::theme::Theme::bg_primary())
+        .style(theme::bg_primary())
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: true });
       f.render_widget(no_results, table_render_chunk);
@@ -523,8 +522,8 @@ impl Db {
 
       let list = List::new(items)
         .block(tables)
-        .style(crate::theme::Theme::bg_primary())
-        .highlight_style(crate::theme::Theme::selection_active());
+        .style(theme::bg_primary())
+        .highlight_style(theme::selection_active());
       f.render_stateful_widget(list, table_render_chunk, &mut table_list_state);
     }
 
@@ -539,8 +538,8 @@ impl Db {
 
     // Render tabs
     let tabs = Tabs::new(["Query [t]", "History [t]"])
-      .style(crate::theme::Theme::tab_normal())
-      .highlight_style(crate::theme::Theme::tab_selected())
+      .style(theme::tab_normal())
+      .highlight_style(theme::tab_selected())
       .select(self.selected_tab)
       .padding("", "")
       .divider(" ");
@@ -581,18 +580,18 @@ impl Db {
     let history_block = Block::default()
       .borders(Borders::ALL)
       .border_style(if is_focused {
-        crate::theme::Theme::border_focused()
+        theme::border_focused()
       } else {
-        crate::theme::Theme::border_normal()
+        theme::border_normal()
       })
       .title("[2] Query History")
-      .title_style(crate::theme::Theme::title())
+      .title_style(theme::title())
       .border_type(BorderType::Rounded);
 
     if self.query_history.is_empty() {
       let empty_msg = Paragraph::new("No query history available")
         .block(history_block)
-        .style(crate::theme::Theme::muted())
+        .style(theme::muted())
         .alignment(Alignment::Center);
       f.render_widget(empty_msg, area);
       return Ok(());
@@ -602,8 +601,7 @@ impl Db {
     let items: Vec<ListItem> = self.query_history
       .iter()
       .rev() // Show most recent first
-      .enumerate()
-      .map(|(_idx, entry)| {
+      .map(|entry| {
         let truncated_query = if entry.query.len() > 60 {
           format!("{}...", &entry.query[..57])
         } else {
@@ -614,13 +612,13 @@ impl Db {
           .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
           .unwrap_or_else(|| "Unknown".to_string());
 
-        let display_text = format!("{} | {}", time_str, truncated_query);
+        let display_text = format!("{time_str} | {truncated_query}");
 
         ListItem::new(display_text)
           .style(if entry.success {
-            crate::theme::Theme::success()
+            theme::success()
           } else {
-            crate::theme::Theme::error()
+            theme::error()
           })
       })
       .collect();
@@ -633,8 +631,8 @@ impl Db {
 
     let history_list = List::new(items)
       .block(history_block)
-      .style(crate::theme::Theme::bg_primary())
-      .highlight_style(crate::theme::Theme::selection_active());
+      .style(theme::bg_primary())
+      .highlight_style(theme::selection_active());
 
     f.render_stateful_widget(history_list, area, &mut list_state);
 
@@ -671,7 +669,7 @@ impl Db {
       .collect();
     let header = ratatui::widgets::Row::new(header_cells)
       .height(HEADER_HEIGHT)
-      .style(crate::theme::Theme::header())
+      .style(theme::header())
       .bottom_margin(1);
 
     // Use filtered results if available
@@ -681,7 +679,7 @@ impl Db {
         .query_results
         .iter()
         .map(|r| {
-          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(c, ROW_HEIGHT));
           ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
         })
         .collect::<Vec<_>>()
@@ -692,7 +690,7 @@ impl Db {
         .iter()
         .filter_map(|(idx, _score)| self.query_results.get(*idx))
         .map(|r| {
-          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(c, ROW_HEIGHT));
           ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
         })
         .collect::<Vec<_>>()
@@ -703,11 +701,11 @@ impl Db {
       let filtered_count = self.filtered_results.len();
       let total_count = self.query_results.len();
       Paragraph::new(Text::styled(
-        format!("Rows: {}/{} (search: '{}')", filtered_count, total_count, self.results_search_query),
-        crate::theme::Theme::info(),
+        format!("Rows: {filtered_count}/{total_count} (search: '{}')", self.results_search_query),
+        theme::info(),
       ))
     } else {
-      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), crate::theme::Theme::info()))
+      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), theme::info()))
     };
     f.render_widget(status_text, table_chunks[1]);
 
@@ -739,25 +737,21 @@ impl Db {
           .borders(Borders::ALL)
           .title(title)
           .title_style(if self.is_searching_results {
-            crate::theme::Theme::warning()
+            theme::warning()
           } else {
-            crate::theme::Theme::title()
+            theme::title()
           })
           .border_style(if is_results_focused {
-            crate::theme::Theme::border_focused()
+            theme::border_focused()
           } else {
-            crate::theme::Theme::border_normal()
+            theme::border_normal()
           })
           .border_type(BorderType::Rounded),
       )
-      .style(crate::theme::Theme::bg_primary())
+      .style(theme::bg_primary())
       .highlight_symbol("\n▶ ")
-      .highlight_style(crate::theme::Theme::selection_active())
-      .widths(
-        (0..VISIBLE_COLUMNS)
-          .map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16))
-          .collect::<Vec<_>>()
-      );
+      .highlight_style(theme::selection_active())
+      .widths((0..VISIBLE_COLUMNS).map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16)).collect::<Vec<_>>());
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
 
@@ -766,13 +760,13 @@ impl Db {
         let area = self.centered_rect(80, 60, f.area());
         let block = Block::default()
           .title("Row Details")
-          .title_style(crate::theme::Theme::title())
+          .title_style(theme::title())
           .borders(Borders::ALL)
-          .border_style(crate::theme::Theme::border_focused())
+          .border_style(theme::border_focused())
           .border_type(BorderType::Rounded);
         let paragraph = Paragraph::new(json_str.as_str())
           .block(block)
-          .style(crate::theme::Theme::bg_secondary())
+          .style(theme::bg_secondary())
           .wrap(Wrap { trim: true });
         f.render_widget(Clear, area);
         f.render_widget(paragraph, area);
@@ -807,20 +801,20 @@ impl Db {
       let area = self.centered_rect(70, 70, f.area());
       let block = Block::default()
         .title("Row Preview (ESC to close)")
-        .title_style(crate::theme::Theme::title())
+        .title_style(theme::title())
         .borders(Borders::ALL)
-        .border_style(crate::theme::Theme::border_focused())
+        .border_style(theme::border_focused())
         .border_type(BorderType::Rounded);
 
       // Format row data nicely
       let mut text_lines = vec![];
       for (header, value) in self.selected_headers.iter().zip(selected_row.iter()) {
         text_lines
-          .push(Line::from(vec![Span::styled(format!("{}: ", header), crate::theme::Theme::info()), Span::raw(value)]));
+          .push(Line::from(vec![Span::styled(format!("{header}: "), theme::info()), Span::raw(value)]));
       }
 
       let paragraph =
-        Paragraph::new(text_lines).block(block).style(crate::theme::Theme::bg_secondary()).wrap(Wrap { trim: true });
+        Paragraph::new(text_lines).block(block).style(theme::bg_secondary()).wrap(Wrap { trim: true });
 
       f.render_widget(Clear, area);
       f.render_widget(paragraph, area);
@@ -850,7 +844,7 @@ impl Db {
       .collect();
     let header = ratatui::widgets::Row::new(header_cells)
       .height(HEADER_HEIGHT)
-      .style(crate::theme::Theme::header())
+      .style(theme::header())
       .bottom_margin(1);
 
     // Use filtered results if available
@@ -860,7 +854,7 @@ impl Db {
         .query_results
         .iter()
         .map(|r| {
-          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(c, ROW_HEIGHT));
           ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
         })
         .collect::<Vec<_>>()
@@ -871,7 +865,7 @@ impl Db {
         .iter()
         .filter_map(|(idx, _score)| self.query_results.get(*idx))
         .map(|r| {
-          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(&c, ROW_HEIGHT));
+          let cells = r.iter().skip(skip_count).take(VISIBLE_COLUMNS).map(|c| create_centered_cell(c, ROW_HEIGHT));
           ratatui::widgets::Row::new(cells).height(ROW_HEIGHT)
         })
         .collect::<Vec<_>>()
@@ -882,11 +876,11 @@ impl Db {
       let filtered_count = self.filtered_results.len();
       let total_count = self.query_results.len();
       Paragraph::new(Text::styled(
-        format!("Rows: {}/{} (search: '{}')", filtered_count, total_count, self.results_search_query),
-        crate::theme::Theme::info(),
+        format!("Rows: {filtered_count}/{total_count} (search: '{}')", self.results_search_query),
+        theme::info(),
       ))
     } else {
-      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), crate::theme::Theme::info()))
+      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), theme::info()))
     };
     f.render_widget(status_text, table_chunks[1]);
 
@@ -918,25 +912,21 @@ impl Db {
           .borders(Borders::ALL)
           .title(title)
           .title_style(if self.is_searching_results {
-            crate::theme::Theme::warning()
+            theme::warning()
           } else {
-            crate::theme::Theme::title()
+            theme::title()
           })
           .border_style(if is_results_focused && self.selection_mode == SelectionMode::Table {
-            crate::theme::Theme::border_focused()
+            theme::border_focused()
           } else {
-            crate::theme::Theme::border_normal()
+            theme::border_normal()
           })
           .border_type(BorderType::Rounded),
       )
-      .style(crate::theme::Theme::bg_primary())
+      .style(theme::bg_primary())
       .highlight_symbol("\n▶ ")
-      .highlight_style(crate::theme::Theme::selection_active())
-      .widths(
-        (0..VISIBLE_COLUMNS)
-          .map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16))
-          .collect::<Vec<_>>()
-      );
+      .highlight_style(theme::selection_active())
+      .widths((0..VISIBLE_COLUMNS).map(|_| Constraint::Percentage((100 / VISIBLE_COLUMNS) as u16)).collect::<Vec<_>>());
 
     f.render_stateful_widget(result_table, table_chunks[0], &mut table_state);
 
@@ -948,20 +938,20 @@ impl Db {
       let block = Block::default()
         .borders(Borders::ALL)
         .title("Row Details")
-        .title_style(crate::theme::Theme::title())
+        .title_style(theme::title())
         .border_style(
           if self.selected_component == ComponentKind::Results && self.selection_mode == SelectionMode::Row {
-            crate::theme::Theme::border_focused()
+            theme::border_focused()
           } else {
-            crate::theme::Theme::border_normal()
+            theme::border_normal()
           },
         )
         .border_type(BorderType::Rounded);
 
       // Create a table showing column names and values
       let header_cells =
-        ["Column", "Value"].iter().map(|h| Cell::from(h.to_string()).style(crate::theme::Theme::header()));
-      let header = ratatui::widgets::Row::new(header_cells).style(crate::theme::Theme::bg_primary()).height(1);
+        ["Column", "Value"].iter().map(|h| Cell::from(h.to_string()).style(theme::header()));
+      let header = ratatui::widgets::Row::new(header_cells).style(theme::bg_primary()).height(1);
 
       let rows = selected_row
         .iter()
@@ -979,9 +969,9 @@ impl Db {
         .rows(rows)
         .header(header)
         .block(block)
-        .style(crate::theme::Theme::bg_primary())
+        .style(theme::bg_primary())
         .highlight_symbol("▶ ")
-        .highlight_style(crate::theme::Theme::selection_active())
+        .highlight_style(theme::selection_active())
         .widths([Constraint::Percentage(30), Constraint::Percentage(70)]);
 
       f.render_stateful_widget(detail_table, area, &mut table_state);
@@ -1017,7 +1007,7 @@ impl Db {
       .collect();
     let header = ratatui::widgets::Row::new(header_cells)
       .height(HEADER_HEIGHT)
-      .style(crate::theme::Theme::header())
+      .style(theme::header())
       .bottom_margin(1);
 
     // Use filtered results if available
@@ -1029,10 +1019,10 @@ impl Db {
         .enumerate()
         .map(|(row_idx, r)| {
           let cells = r.iter().enumerate().skip(skip_count).take(VISIBLE_COLUMNS).map(|(actual_col_idx, c)| {
-            let cell = create_centered_cell(&c, ROW_HEIGHT);
+            let cell = create_centered_cell(c, ROW_HEIGHT);
             // Highlight the selected cell
             if row_idx == self.selected_row_index && actual_col_idx == self.selected_cell_index {
-              cell.style(crate::theme::Theme::selection_active())
+              cell.style(theme::selection_active())
             } else {
               cell
             }
@@ -1048,10 +1038,10 @@ impl Db {
         .filter_map(|(idx, _score)| self.query_results.get(*idx).map(|row| (*idx, row)))
         .map(|(row_idx, r)| {
           let cells = r.iter().enumerate().skip(skip_count).take(VISIBLE_COLUMNS).map(|(actual_col_idx, c)| {
-            let cell = create_centered_cell(&c, ROW_HEIGHT);
+            let cell = create_centered_cell(c, ROW_HEIGHT);
             // Highlight the selected cell
             if row_idx == self.selected_row_index && actual_col_idx == self.selected_cell_index {
-              cell.style(crate::theme::Theme::selection_active())
+              cell.style(theme::selection_active())
             } else {
               cell
             }
@@ -1072,7 +1062,7 @@ impl Db {
         self.selected_cell_index + 1,
         self.selected_headers.len()
       ),
-      crate::theme::Theme::warning(),
+      theme::warning(),
     ));
     f.render_widget(status_text, table_chunks[1]);
 
@@ -1094,15 +1084,15 @@ impl Db {
         Block::default()
           .borders(Borders::ALL)
           .title("[3] Results - Cell Selection")
-          .title_style(crate::theme::Theme::warning())
+          .title_style(theme::warning())
           .border_style(if is_results_focused {
-            crate::theme::Theme::border_focused()
+            theme::border_focused()
           } else {
-            crate::theme::Theme::border_normal()
+            theme::border_normal()
           })
           .border_type(BorderType::Rounded),
       )
-      .style(crate::theme::Theme::bg_primary())
+      .style(theme::bg_primary())
       .highlight_symbol("\n▶ ")
       .highlight_style(Style::default()) // Don't use highlight style in cell mode
       .widths(
@@ -1166,13 +1156,13 @@ impl Db {
       let area = self.centered_rect(60, 20, f.area());
       let block = Block::default()
         .title("Error")
-        .title_style(crate::theme::Theme::error())
+        .title_style(theme::error())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(crate::theme::Theme::ERROR))
+        .border_style(theme::error())
         .border_type(BorderType::Rounded);
       let paragraph = Paragraph::new(error_message.as_str())
         .block(block)
-        .style(crate::theme::Theme::bg_secondary())
+        .style(theme::bg_secondary())
         .wrap(Wrap { trim: true });
       f.render_widget(Clear, area);
       f.render_widget(paragraph, area);
@@ -1189,57 +1179,57 @@ impl Db {
     let area = self.centered_rect(80, 80, f.area());
     let block = Block::default()
       .title("Keyboard Shortcuts (ESC to close)")
-      .title_style(crate::theme::Theme::title())
+      .title_style(theme::title())
       .borders(Borders::ALL)
-      .border_style(crate::theme::Theme::border_focused())
+      .border_style(theme::border_focused())
       .border_type(BorderType::Rounded);
 
     let help_text = vec![
-      Line::from(vec![Span::styled("Navigation", crate::theme::Theme::header())]),
+      Line::from(vec![Span::styled("Navigation", theme::header())]),
       Line::from(vec![
-        Span::styled("1/2/3", crate::theme::Theme::info()),
+        Span::styled("1/2/3", theme::info()),
         Span::raw(" - Switch between Tables/Query/Results"),
       ]),
       Line::from(vec![
-        Span::styled("↑/↓/←/→", crate::theme::Theme::info()),
+        Span::styled("↑/↓/←/→", theme::info()),
         Span::raw(" - Navigate tables/rows/columns"),
       ]),
-      Line::from(vec![Span::styled("j/k/h/l", crate::theme::Theme::info()), Span::raw(" - Vim-style navigation")]),
+      Line::from(vec![Span::styled("j/k/h/l", theme::info()), Span::raw(" - Vim-style navigation")]),
       Line::from(""),
-      Line::from(vec![Span::styled("Tables (Panel 1)", crate::theme::Theme::header())]),
-      Line::from(vec![Span::styled("/", crate::theme::Theme::info()), Span::raw(" - Search tables")]),
-      Line::from(vec![Span::styled("Enter", crate::theme::Theme::info()), Span::raw(" - Load selected table")]),
+      Line::from(vec![Span::styled("Tables (Panel 1)", theme::header())]),
+      Line::from(vec![Span::styled("/", theme::info()), Span::raw(" - Search tables")]),
+      Line::from(vec![Span::styled("Enter", theme::info()), Span::raw(" - Load selected table")]),
       Line::from(""),
-      Line::from(vec![Span::styled("Query Editor (Panel 2)", crate::theme::Theme::header())]),
-      Line::from(vec![Span::styled("Ctrl+Enter", crate::theme::Theme::info()), Span::raw(" - Execute query")]),
-      Line::from(vec![Span::styled("Ctrl+u", crate::theme::Theme::info()), Span::raw(" - Clear query editor")]),
-      Line::from(vec![Span::styled("Ctrl+Space", crate::theme::Theme::info()), Span::raw(" - Trigger autocomplete")]),
+      Line::from(vec![Span::styled("Query Editor (Panel 2)", theme::header())]),
+      Line::from(vec![Span::styled("Ctrl+Enter", theme::info()), Span::raw(" - Execute query")]),
+      Line::from(vec![Span::styled("Ctrl+u", theme::info()), Span::raw(" - Clear query editor")]),
+      Line::from(vec![Span::styled("Ctrl+Space", theme::info()), Span::raw(" - Trigger autocomplete")]),
       Line::from(vec![
-        Span::styled("Tab", crate::theme::Theme::info()),
+        Span::styled("Tab", theme::info()),
         Span::raw(" - Switch between Query/History tabs"),
       ]),
       Line::from(""),
-      Line::from(vec![Span::styled("Results (Panel 3)", crate::theme::Theme::header())]),
-      Line::from(vec![Span::styled("/", crate::theme::Theme::info()), Span::raw(" - Search results")]),
-      Line::from(vec![Span::styled("Space", crate::theme::Theme::info()), Span::raw(" - Toggle row detail view")]),
-      Line::from(vec![Span::styled("p", crate::theme::Theme::info()), Span::raw(" - Preview row in popup")]),
-      Line::from(vec![Span::styled("v", crate::theme::Theme::info()), Span::raw(" - Enter cell selection mode")]),
-      Line::from(vec![Span::styled("r", crate::theme::Theme::info()), Span::raw(" - Re-run last query")]),
+      Line::from(vec![Span::styled("Results (Panel 3)", theme::header())]),
+      Line::from(vec![Span::styled("/", theme::info()), Span::raw(" - Search results")]),
+      Line::from(vec![Span::styled("Space", theme::info()), Span::raw(" - Toggle row detail view")]),
+      Line::from(vec![Span::styled("p", theme::info()), Span::raw(" - Preview row in popup")]),
+      Line::from(vec![Span::styled("v", theme::info()), Span::raw(" - Enter cell selection mode")]),
+      Line::from(vec![Span::styled("r", theme::info()), Span::raw(" - Re-run last query")]),
       Line::from(""),
-      Line::from(vec![Span::styled("Copy Commands", crate::theme::Theme::header())]),
-      Line::from(vec![Span::styled("y", crate::theme::Theme::info()), Span::raw(" - Copy current cell/row")]),
-      Line::from(vec![Span::styled("Y", crate::theme::Theme::info()), Span::raw(" - Copy entire row as TSV")]),
-      Line::from(vec![Span::styled("Ctrl+y", crate::theme::Theme::info()), Span::raw(" - Copy row as JSON")]),
+      Line::from(vec![Span::styled("Copy Commands", theme::header())]),
+      Line::from(vec![Span::styled("y", theme::info()), Span::raw(" - Copy current cell/row")]),
+      Line::from(vec![Span::styled("Y", theme::info()), Span::raw(" - Copy entire row as TSV")]),
+      Line::from(vec![Span::styled("Ctrl+y", theme::info()), Span::raw(" - Copy row as JSON")]),
       Line::from(""),
-      Line::from(vec![Span::styled("General", crate::theme::Theme::header())]),
-      Line::from(vec![Span::styled("?", crate::theme::Theme::info()), Span::raw(" - Show this help")]),
-      Line::from(vec![Span::styled("q", crate::theme::Theme::info()), Span::raw(" - Quit application")]),
-      Line::from(vec![Span::styled("ESC", crate::theme::Theme::info()), Span::raw(" - Exit current mode/close popup")]),
+      Line::from(vec![Span::styled("General", theme::header())]),
+      Line::from(vec![Span::styled("?", theme::info()), Span::raw(" - Show this help")]),
+      Line::from(vec![Span::styled("q", theme::info()), Span::raw(" - Quit application")]),
+      Line::from(vec![Span::styled("ESC", theme::info()), Span::raw(" - Exit current mode/close popup")]),
     ];
 
     let paragraph = Paragraph::new(help_text)
       .block(block)
-      .style(crate::theme::Theme::bg_secondary())
+      .style(theme::bg_secondary())
       .wrap(Wrap { trim: false })
       .scroll((0, 0));
 
@@ -1518,18 +1508,14 @@ impl Component for Db {
           }
 
           // Handle manual autocomplete trigger (Ctrl+Space)
-          if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if self.editor_backend.mode() == Mode::Insert {
-              self.trigger_autocomplete();
-              return Ok(None);
-            }
+          if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) && self.editor_backend.mode() == Mode::Insert {
+            self.trigger_autocomplete();
+            return Ok(None);
           }
 
           // Delegate key handling to the editor backend
-          if let Ok(action) = self.editor_backend.handle_key_event(key) {
-            if let Some(action) = action {
-              return Ok(Some(action));
-            }
+          if let Ok(Some(action)) = self.editor_backend.handle_key_event(key) {
+            return Ok(Some(action));
           }
 
           // Handle query execution for Enter key in normal mode
@@ -1921,12 +1907,12 @@ impl Component for Db {
 
     let title_block = Block::default()
       .borders(Borders::ALL)
-      .border_style(crate::theme::Theme::border_normal())
+      .border_style(theme::border_normal())
       .border_type(BorderType::Rounded)
-      .style(crate::theme::Theme::bg_primary());
+      .style(theme::bg_primary());
 
     let title =
-      Paragraph::new(Text::styled("Query Crafter - [1] Tables [2] Query [3] Results", crate::theme::Theme::title()))
+      Paragraph::new(Text::styled("Query Crafter - [1] Tables [2] Query [3] Results", theme::title()))
         .block(title_block);
 
     f.render_widget(title, chunks[0]);

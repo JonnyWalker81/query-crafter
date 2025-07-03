@@ -174,7 +174,7 @@ impl SqlParser {
             return Some(SqlContext::AfterSelect);
           }
           // Check if we're still in the SELECT clause
-          let has_from = tokens[i..].iter().any(|&t| t == "FROM");
+          let has_from = tokens[i..].contains(&"FROM");
           if !has_from {
             return Some(SqlContext::ColumnName { table: None });
           }
@@ -193,6 +193,12 @@ pub struct AutocompleteProvider {
   table_columns_cache: HashMap<String, Vec<DbColumn>>,
   sql_keywords: Vec<String>,
   matcher: Matcher,
+}
+
+impl Default for AutocompleteProvider {
+  fn default() -> Self {
+    Self::new()
+  }
 }
 
 impl AutocompleteProvider {

@@ -70,7 +70,7 @@ impl Queryer for Sqlite {
   }
 
   async fn load_table_columns(&self, table_name: &str, _schema: &str) -> Result<Vec<DbColumn>> {
-    let pragma_query = format!("PRAGMA table_info({})", table_name);
+    let pragma_query = format!("PRAGMA table_info({table_name})");
     let rows = sqlx::query(&pragma_query).fetch_all(&self.conn).await?;
 
     let columns: Vec<DbColumn> = rows

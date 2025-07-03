@@ -1,4 +1,5 @@
 use tui_textarea::Input;
+use query_crafter_theme as theme;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -12,10 +13,10 @@ pub enum Mode {
 impl Mode {
   pub fn cursor_style(&self) -> ratatui::style::Style {
     match self {
-      Self::Normal => crate::theme::Theme::cursor_normal(),
-      Self::Insert => crate::theme::Theme::cursor_insert(),
-      Self::Visual => crate::theme::Theme::cursor_visual(),
-      Self::Operator(_) => crate::theme::Theme::cursor_normal(),
+      Self::Normal => theme::cursor_normal(),
+      Self::Insert => theme::cursor_insert(),
+      Self::Visual => theme::cursor_visual(),
+      Self::Operator(_) => theme::cursor_normal(),
     }
   }
 }

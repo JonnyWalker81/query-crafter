@@ -1,11 +1,45 @@
 use std::net::TcpListener;
 use std::process::Stdio;
 
-use aws_config::BehaviorVersion;
-use aws_sdk_ec2::types::{Filter, Instance};
 use color_eyre::eyre::{anyhow, Result};
+use serde::Deserialize;
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout, Duration};
+
+// Structures for parsing AWS CLI JSON output
+#[derive(Debug, Deserialize)]
+struct Ec2Instance {
+    #[serde(rename = "InstanceId")]
+    instance_id: String,
+    #[serde(rename = "PublicIpAddress")]
+    public_ip_address: Option<String>,
+    #[serde(rename = "Tags")]
+    tags: Option<Vec<Tag>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Tag {
+    #[serde(rename = "Key")]
+    key: String,
+    #[serde(rename = "Value")]
+    value: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RdsInstance {
+    #[serde(rename = "DBInstanceIdentifier")]
+    db_instance_identifier: String,
+    #[serde(rename = "Endpoint")]
+    endpoint: Option<RdsEndpoint>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RdsEndpoint {
+    #[serde(rename = "Address")]
+    address: String,
+    #[serde(rename = "Port")]
+    port: i32,
+}
 
 #[derive(Debug)]
 pub struct TunnelConfig {
@@ -100,7 +134,7 @@ impl TunnelManager {
         // Try to find in PATH
         if let Ok(path_env) = std::env::var("PATH") {
             for path_dir in path_env.split(':') {
-                let aws_path = format!("{}/aws", path_dir);
+                let aws_path = format!("{path_dir}/aws");
                 if std::path::Path::new(&aws_path).exists() {
                     return Ok(aws_path);
                 }
@@ -124,46 +158,50 @@ impl TunnelManager {
         Err(anyhow!("AWS CLI not found. Please ensure AWS CLI is installed and in PATH, or set AWS_CLI_PATH environment variable to the full path of the aws command"))
     }
 
-    /// Initialize AWS SDK config
-    async fn init_aws_config(&self) -> Result<aws_config::SdkConfig> {
-        let mut config_loader = aws_config::defaults(BehaviorVersion::latest());
+    /// Find bastion host by Name tag containing environment and "bastion"
+    async fn find_bastion_instance(&self) -> Result<Ec2Instance> {
+        let aws_cmd = Self::find_aws_cli_path()?;
+        eprintln!("Using AWS CLI at: {aws_cmd}");
         
+        // Build AWS CLI command
+        let mut cmd = Command::new(&aws_cmd);
+        cmd.arg("ec2")
+           .arg("describe-instances")
+           .arg("--filters")
+           .arg("Name=instance-state-name,Values=running")
+           .arg("--query")
+           .arg("Reservations[].Instances[]")
+           .arg("--output")
+           .arg("json");
+        
+        // Add profile if specified
         if let Some(profile) = &self.config.aws_profile {
-            config_loader = config_loader.profile_name(profile);
+            cmd.arg("--profile").arg(profile);
         }
         
-        Ok(config_loader.load().await)
-    }
-
-    /// Find bastion host by Name tag containing environment and "bastion"
-    pub async fn find_bastion_instance(&self, aws_config: &aws_config::SdkConfig) -> Result<Instance> {
-        let ec2_client = aws_sdk_ec2::Client::new(aws_config);
+        // Execute command
+        let output = cmd.output().await
+            .map_err(|e| anyhow!("Failed to execute AWS CLI: {}", e))?;
         
-        let filters = vec![
-            Filter::builder()
-                .name("instance-state-name")
-                .values("running")
-                .build(),
-        ];
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("AWS CLI failed: {}", stderr));
+        }
         
-        let resp = ec2_client
-            .describe_instances()
-            .set_filters(Some(filters))
-            .send()
-            .await?;
+        // Parse JSON output
+        let instances: Vec<Ec2Instance> = serde_json::from_slice(&output.stdout)
+            .map_err(|e| anyhow!("Failed to parse EC2 instances JSON: {}", e))?;
         
         // Find instance where Name tag contains both environment and "bastion" (case-insensitive)
         let env_lower = self.config.environment.to_lowercase();
-        let instance = resp
-            .reservations()
-            .iter()
-            .flat_map(|r| r.instances())
+        let instance = instances
+            .into_iter()
             .find(|i| {
                 // Check Name tag
-                for tag in i.tags() {
-                    if tag.key() == Some("Name") {
-                        if let Some(name) = tag.value() {
-                            let name_lower = name.to_lowercase();
+                if let Some(tags) = &i.tags {
+                    for tag in tags {
+                        if tag.key == "Name" {
+                            let name_lower = tag.value.to_lowercase();
                             return name_lower.contains(&env_lower) && name_lower.contains("bastion");
                         }
                     }
@@ -173,53 +211,69 @@ impl TunnelManager {
             .ok_or_else(|| anyhow!("No bastion instance found with name containing '{}' and 'bastion'", self.config.environment))?;
         
         // Log the found bastion for debugging
-        for tag in instance.tags() {
-            if tag.key() == Some("Name") {
-                if let Some(name) = tag.value() {
-                    eprintln!("Found bastion instance: {}", name);
+        if let Some(tags) = &instance.tags {
+            for tag in tags {
+                if tag.key == "Name" {
+                    eprintln!("Found bastion instance: {}", tag.value);
                 }
             }
         }
         
-        if let Some(instance_id) = instance.instance_id() {
-            eprintln!("Bastion instance ID: {}", instance_id);
-        }
+        eprintln!("Bastion instance ID: {}", instance.instance_id);
         
-        Ok(instance.clone())
+        Ok(instance)
     }
 
     /// Get RDS endpoint for the environment
-    pub async fn get_rds_endpoint(&self, aws_config: &aws_config::SdkConfig) -> Result<(String, u16)> {
-        let rds_client = aws_sdk_rds::Client::new(aws_config);
+    async fn get_rds_endpoint(&self) -> Result<(String, u16)> {
+        let aws_cmd = Self::find_aws_cli_path()?;
+        
+        // Build AWS CLI command
+        let mut cmd = Command::new(&aws_cmd);
+        cmd.arg("rds")
+           .arg("describe-db-instances")
+           .arg("--query")
+           .arg("DBInstances[]")
+           .arg("--output")
+           .arg("json");
+        
+        // Add profile if specified
+        if let Some(profile) = &self.config.aws_profile {
+            cmd.arg("--profile").arg(profile);
+        }
         
         eprintln!("Listing all RDS instances...");
-        let resp = rds_client
-            .describe_db_instances()
-            .send()
-            .await?;
+        
+        // Execute command
+        let output = cmd.output().await
+            .map_err(|e| anyhow!("Failed to execute AWS CLI: {}", e))?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("AWS CLI failed: {}", stderr));
+        }
+        
+        // Parse JSON output
+        let instances: Vec<RdsInstance> = serde_json::from_slice(&output.stdout)
+            .map_err(|e| anyhow!("Failed to parse RDS instances JSON: {}", e))?;
         
         // Log all found instances for debugging
-        for db in resp.db_instances() {
-            if let Some(id) = db.db_instance_identifier() {
-                eprintln!("  Found RDS instance: {}", id);
-            }
+        for db in &instances {
+            eprintln!("  Found RDS instance: {}", db.db_instance_identifier);
         }
         
         // Find RDS instance by environment or database name
         let env_lower = self.config.environment.to_lowercase();
         let db_name_lower = self.config.database_name.to_lowercase();
         
-        let db_instance = resp
-            .db_instances()
-            .iter()
+        let db_instance = instances
+            .into_iter()
             .find(|db| {
                 // Check if DB identifier contains environment name or database name
-                if let Some(id) = db.db_instance_identifier() {
-                    let id_lower = id.to_lowercase();
-                    if id_lower.contains(&env_lower) || id_lower.contains(&db_name_lower) {
-                        eprintln!("  Matched RDS instance: {}", id);
-                        return true;
-                    }
+                let id_lower = db.db_instance_identifier.to_lowercase();
+                if id_lower.contains(&env_lower) || id_lower.contains(&db_name_lower) {
+                    eprintln!("  Matched RDS instance: {}", db.db_instance_identifier);
+                    return true;
                 }
                 false
             })
@@ -227,61 +281,49 @@ impl TunnelManager {
                 self.config.environment, self.config.database_name))?;
         
         let endpoint = db_instance
-            .endpoint()
+            .endpoint
             .ok_or_else(|| anyhow!("RDS instance has no endpoint"))?;
         
-        let host = endpoint
-            .address()
-            .ok_or_else(|| anyhow!("RDS endpoint has no address"))?;
+        let port = endpoint.port as u16;
         
-        let port = endpoint.port().unwrap_or(5432) as u16;
-        
-        Ok((host.to_string(), port))
+        Ok((endpoint.address, port))
     }
 
     /// Establish SSH tunnel through bastion
     pub async fn establish_tunnel(&mut self) -> Result<u16> {
         eprintln!("Establishing SSH tunnel through bastion...");
         
-        // Initialize AWS config
-        eprintln!("Initializing AWS config...");
-        let aws_config = match self.init_aws_config().await {
-            Ok(config) => config,
-            Err(e) => return Err(anyhow!("Failed to initialize AWS config: {}", e)),
-        };
-        
         // Find bastion instance
         eprintln!("Searching for bastion instance in environment '{}'...", self.config.environment);
-        let bastion = match self.find_bastion_instance(&aws_config).await {
+        let bastion = match self.find_bastion_instance().await {
             Ok(instance) => instance,
             Err(e) => return Err(anyhow!("Failed to find bastion instance: {}", e)),
         };
         
         // Check if we should use instance ID or IP
-        let bastion_instance_id = bastion.instance_id()
-            .ok_or_else(|| anyhow!("Bastion has no instance ID"))?;
+        let bastion_instance_id = &bastion.instance_id;
         
         let use_session_manager = self.config.use_session_manager ||
-            bastion.public_ip_address().is_none() || 
+            bastion.public_ip_address.is_none() || 
             std::env::var("USE_SESSION_MANAGER").is_ok();
         
         let bastion_target = if use_session_manager {
             eprintln!("Using AWS Session Manager to connect to bastion");
             bastion_instance_id.to_string()
         } else {
-            let ip = bastion.public_ip_address()
+            let ip = bastion.public_ip_address
                 .ok_or_else(|| anyhow!("Bastion has no public IP and Session Manager not configured"))?;
-            eprintln!("Found bastion host IP: {}", ip);
-            ip.to_string()
+            eprintln!("Found bastion host IP: {ip}");
+            ip
         };
         
         // Get RDS endpoint
         eprintln!("Searching for RDS instance...");
-        let (rds_host, rds_port) = match self.get_rds_endpoint(&aws_config).await {
+        let (rds_host, rds_port) = match self.get_rds_endpoint().await {
             Ok(endpoint) => endpoint,
             Err(e) => return Err(anyhow!("Failed to get RDS endpoint: {}", e)),
         };
-        eprintln!("Found RDS endpoint: {}:{}", rds_host, rds_port);
+        eprintln!("Found RDS endpoint: {rds_host}:{rds_port}");
         
         self.remote_host = Some(rds_host.clone());
         self.remote_port = rds_port;
@@ -297,13 +339,13 @@ impl TunnelManager {
         ssh_cmd
             .arg("-N") // No command execution
             .arg("-L")
-            .arg(format!("{}:{}:{}", local_port, rds_host, rds_port));
+            .arg(format!("{local_port}:{rds_host}:{rds_port}"));
         
         // Add connection target
         if use_session_manager {
             // When using Session Manager, just use the instance ID as host
             // The user's SSH config or our ProxyCommand will handle the connection
-            ssh_cmd.arg(format!("{}@{}", self.config.bastion_user, bastion_instance_id));
+            ssh_cmd.arg(format!("{}@{bastion_instance_id}", self.config.bastion_user));
             
             // Check if user has ProxyCommand in their SSH config for i-*
             let has_ssh_config_proxy = std::process::Command::new("ssh")
@@ -324,7 +366,7 @@ impl TunnelManager {
             if !has_ssh_config_proxy {
                 // User doesn't have ProxyCommand in SSH config, add it ourselves
                 let aws_cmd = Self::find_aws_cli_path()?;
-                eprintln!("Using AWS CLI at: {}", aws_cmd);
+                eprintln!("Using AWS CLI at: {aws_cmd}");
                 
                 ssh_cmd
                     .arg("-o")
@@ -332,7 +374,7 @@ impl TunnelManager {
                         aws_cmd,
                         bastion_instance_id,
                         if let Some(profile) = &self.config.aws_profile {
-                            format!(" --profile {}", profile)
+                            format!(" --profile {profile}")
                         } else {
                             String::new()
                         }));
@@ -378,10 +420,10 @@ impl TunnelManager {
             
             // Verify key exists
             if !std::path::Path::new(&key_path).exists() {
-                eprintln!("Warning: SSH key not found at: {}", key_path);
+                eprintln!("Warning: SSH key not found at: {key_path}");
             }
             
-            eprintln!("Using SSH key: {}", key_path);
+            eprintln!("Using SSH key: {key_path}");
             ssh_cmd.arg("-i").arg(&key_path);
             // For Session Manager, also disable other key attempts
             if use_session_manager {
@@ -398,21 +440,21 @@ impl TunnelManager {
         
         // Log the connection method
         if use_session_manager {
-            eprintln!("SSH tunneling via Session Manager to instance: {}", bastion_instance_id);
+            eprintln!("SSH tunneling via Session Manager to instance: {bastion_instance_id}");
         } else {
-            eprintln!("SSH tunneling via direct connection to: {}@{}", self.config.bastion_user, bastion_target);
+            eprintln!("SSH tunneling via direct connection to: {}@{bastion_target}", self.config.bastion_user);
         }
-        eprintln!("Local port forwarding: {} -> {}:{}", local_port, rds_host, rds_port);
+        eprintln!("Local port forwarding: {local_port} -> {rds_host}:{rds_port}");
         
         // Spawn SSH process
-        eprintln!("Starting SSH tunnel on local port {}...", local_port);
+        eprintln!("Starting SSH tunnel on local port {local_port}...");
         let mut child = match ssh_cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn() {
             Ok(child) => child,
-            Err(e) => return Err(anyhow!("Failed to spawn SSH process: {}", e)),
+            Err(e) => return Err(anyhow!("Failed to spawn SSH process: {e}")),
         };
         
         // Wait for tunnel to be established
@@ -423,20 +465,20 @@ impl TunnelManager {
             // Detach stderr to prevent interference
             child.stderr.take();
             self.ssh_process = Some(child);
-            eprintln!("SSH tunnel established successfully on port {}", local_port);
+            eprintln!("SSH tunnel established successfully on port {local_port}");
             Ok(local_port)
         } else {
             // Try to get stderr output for debugging
             if let Ok(Some(status)) = child.try_wait() {
                 // Process already exited
-                eprintln!("SSH process exited with status: {:?}", status);
+                eprintln!("SSH process exited with status: {status:?}");
                 
                 // Try to read stderr
                 if let Some(stderr) = child.stderr.take() {
                     use tokio::io::AsyncReadExt;
                     let mut stderr_reader = tokio::io::BufReader::new(stderr);
                     let mut error_output = String::new();
-                    if let Ok(_) = stderr_reader.read_to_string(&mut error_output).await {
+                    if stderr_reader.read_to_string(&mut error_output).await.is_ok() {
                         // Only show first few lines of error output to avoid verbose SSH debug info
                         let lines: Vec<&str> = error_output.lines().take(10).collect();
                         eprintln!("SSH error output:\n{}", lines.join("\n"));
@@ -458,11 +500,11 @@ impl TunnelManager {
         let delay = Duration::from_millis(500);
         
         for i in 0..max_attempts {
-            if TcpListener::bind(format!("127.0.0.1:{}", port)).is_err() {
+            if TcpListener::bind(format!("127.0.0.1:{port}")).is_err() {
                 // Port is now in use, tunnel might be ready
                 if let Ok(Ok(_)) = timeout(
                     Duration::from_secs(1),
-                    tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                    tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
                 ).await {
                     return true;
                 }
@@ -482,8 +524,7 @@ impl TunnelManager {
             .ok_or_else(|| anyhow!("Tunnel not established"))?;
         
         Ok(format!(
-            "postgresql://{}:{}@localhost:{}/{}?sslmode=require",
-            username, password, local_port, database
+            "postgresql://{username}:{password}@localhost:{local_port}/{database}?sslmode=require"
         ))
     }
 
@@ -492,7 +533,7 @@ impl TunnelManager {
         if let Some(port) = self.local_port {
             if let Ok(Ok(_)) = timeout(
                 Duration::from_secs(1),
-                tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
             ).await {
                 return true;
             }

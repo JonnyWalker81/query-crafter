@@ -1,6 +1,7 @@
 use crossterm::event::KeyEvent;
 use ratatui::widgets::{Block, BorderType, Borders};
 use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
+use query_crafter_theme as theme;
 
 use crate::{
   editor_common::{Mode, Transition},
@@ -17,7 +18,7 @@ pub struct Vim {
 
 impl Vim {
   pub fn new(mode: Mode) -> Self {
-    eprintln!("Initializing Vim editor in mode: {:?}", mode);
+    eprintln!("Initializing Vim editor in mode: {mode:?}");
     Self { mode, pending: Input::default(), textarea: TextArea::default() }
   }
 
@@ -329,10 +330,10 @@ impl EditorComponent for Vim {
     let block = Block::default()
       .borders(Borders::ALL)
       .title("Query Editor")
-      .title_style(crate::theme::Theme::title())
-      .border_style(crate::theme::Theme::border_normal())
+      .title_style(theme::title())
+      .border_style(theme::border_normal())
       .border_type(BorderType::Rounded)
-      .style(crate::theme::Theme::bg_primary());
+      .style(theme::bg_primary());
     self.textarea.set_block(block);
     self.textarea.set_cursor_style(self.mode.cursor_style());
     Ok(())
@@ -365,15 +366,15 @@ impl EditorComponent for Vim {
   fn draw_with_focus(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect, is_focused: bool) {
     // Update the block title to show current mode with focus state
     let border_style =
-      if is_focused { crate::theme::Theme::border_focused() } else { crate::theme::Theme::border_normal() };
+      if is_focused { theme::border_focused() } else { theme::border_normal() };
 
     let block = Block::default()
       .borders(Borders::ALL)
       .title(format!("Query Editor - {}", self.mode))
-      .title_style(crate::theme::Theme::title())
+      .title_style(theme::title())
       .border_style(border_style)
       .border_type(BorderType::Rounded)
-      .style(crate::theme::Theme::bg_primary());
+      .style(theme::bg_primary());
     self.textarea.set_block(block);
 
     // Ensure cursor style is always up to date
@@ -400,10 +401,10 @@ impl EditorComponent for Vim {
     let block = Block::default()
       .borders(Borders::ALL)
       .title(format!("Query Editor - {}", self.mode))
-      .title_style(crate::theme::Theme::title())
-      .border_style(crate::theme::Theme::border_normal())
+      .title_style(theme::title())
+      .border_style(theme::border_normal())
       .border_type(BorderType::Rounded)
-      .style(crate::theme::Theme::bg_primary());
+      .style(theme::bg_primary());
     self.textarea.set_block(block);
   }
 
