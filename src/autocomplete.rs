@@ -182,6 +182,7 @@ impl SqlParser {
 }
 
 /// Provides autocomplete suggestions based on available schema and context
+#[derive(Debug)]
 pub struct AutocompleteProvider {
   tables: Vec<DbTable>,
   table_columns_cache: HashMap<String, Vec<DbColumn>>,

@@ -26,6 +26,7 @@ Query Crafter is a TUI (Terminal User Interface) application for interacting wit
 - Database connections are configured in `config.toml` with multiple connection profiles
 - Configuration is embedded in the binary at build time using `include_bytes!`
 - Runtime configuration is handled through the `Config` struct
+- LSP and autocomplete settings can be configured for enhanced SQL editing
 
 ## Development Commands
 
@@ -109,6 +110,15 @@ Query Crafter includes intelligent SQL autocomplete functionality:
 - **Navigation**: Use `Tab/Down` and `Shift+Tab/Up` to navigate suggestions
 - **Selection**: Press `Enter` to apply selected suggestion or `Esc` to dismiss
 - **Smart Filtering**: Fuzzy matching with relevance scoring
+- **LSP Support**: Optional Language Server Protocol integration for enhanced completions
+
+### SQL Language Server Protocol (LSP) Support
+Query Crafter now supports SQL LSP for enhanced autocomplete:
+
+- **Multiple Backends**: Choose between builtin fuzzy matching, LSP, or hybrid mode
+- **Easy Configuration**: Enable LSP in `config.toml` with `autocomplete.backend = "lsp"`
+- **SQL Language Server**: Works with `sql-language-server` (install via npm)
+- **Future Enhancements**: Foundation for diagnostics, hover info, and formatting
 
 ### Database Setup
 The application expects database connection details in `config.toml`. For development, ensure you have either:
@@ -124,9 +134,13 @@ The application expects database connection details in `config.toml`. For develo
 - `src/editor_component.rs` - Editor component trait abstraction
 - `src/sql.rs` - Database abstraction layer with `Queryer` trait
 - `src/tui.rs` - Terminal UI setup and event loop management
+- `src/autocomplete.rs` - Built-in fuzzy matching autocomplete provider
+- `src/autocomplete_engine.rs` - Unified autocomplete interface supporting multiple backends
+- `src/lsp/` - Language Server Protocol client implementation
 - `config.toml` - Database and editor configurations (embedded at build time)
 - `build.rs` - Build script for compiling Zep C++ library (when feature enabled)
 - `examples/editor_demo.rs` - Demo of editor backend switching functionality
+- `docs/LSP_SETUP.md` - SQL LSP setup and configuration guide
 
 ## Database Support
 

@@ -1,12 +1,14 @@
 pub mod action;
 pub mod app;
 pub mod autocomplete;
+pub mod autocomplete_engine;
 pub mod autocomplete_widget;
 pub mod cli;
 pub mod components;
 pub mod config;
 pub mod editor_common;
 pub mod editor_component;
+pub mod lsp;
 pub mod mode;
 pub mod sql;
 pub mod tui;

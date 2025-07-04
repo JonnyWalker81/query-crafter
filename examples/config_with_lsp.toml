@@ -1,0 +1,45 @@
+# Example configuration for Query Crafter with LSP support
+
+# Editor configuration
+[editor]
+backend = "tui-textarea"
+
+# Autocomplete configuration
+[autocomplete]
+# Options: "builtin", "lsp", "hybrid"
+backend = "builtin"  # Change to "lsp" or "hybrid" to enable LSP
+prefer_lsp = true    # In hybrid mode, prefer LSP results when available
+
+# LSP configuration
+[lsp]
+enabled = false                            # Set to true to enable LSP
+server_name = "sql-language-server"        # LSP server name
+server_command = "sql-language-server"     # Command to launch the server
+server_args = []                           # Additional arguments
+trigger_characters = [".", " "]            # Characters that trigger completion
+
+# Optional: LSP initialization options
+[lsp.init_options]
+# Add any server-specific initialization options here
+# For sql-language-server, you might configure:
+# lint = { enable = true }
+# format = { enable = true }
+
+# Database connections
+[[connections]]
+name = "Local PostgreSQL"
+connection_type = "postgresql"
+host = "localhost"
+port = 5432
+user = "postgres"
+database = "postgres"
+sslmode = "disable"
+
+[[connections]]
+name = "Production DB"
+connection_type = "postgresql"
+host = "prod.example.com"
+port = 5432
+user = "readonly"
+database = "myapp"
+sslmode = "require"

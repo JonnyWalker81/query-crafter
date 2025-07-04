@@ -6,7 +6,7 @@ use derive_deref::{Deref, DerefMut};
 use ratatui::style::{Color, Modifier, Style};
 use serde::{de::Deserializer, Deserialize};
 
-use crate::{action::Action, mode::Mode};
+use crate::{action::Action, mode::Mode, lsp::LspConfig};
 
 // Load config at runtime to prevent constant rebuilds
 fn load_default_config() -> Result<String> {
@@ -22,6 +22,17 @@ fn load_default_config() -> Result<String> {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "editor": {
     "backend": "tui-textarea"
+  },
+  "autocomplete": {
+    "backend": "builtin",
+    "prefer_lsp": true
+  },
+  "lsp": {
+    "enabled": false,
+    "server_name": "sql-language-server",
+    "server_command": "sql-language-server",
+    "server_args": [],
+    "trigger_characters": [".", " "]
   },
   "keybindings": {
     "Home": {
@@ -81,6 +92,34 @@ fn default_editor_backend() -> String {
   "tui-textarea".to_string()
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct AutocompleteConfig {
+  /// Which autocomplete backend to use: "builtin", "lsp", or "hybrid"
+  #[serde(default = "default_autocomplete_backend")]
+  pub backend: String,
+  
+  /// Whether to prefer LSP results in hybrid mode
+  #[serde(default = "default_prefer_lsp")]
+  pub prefer_lsp: bool,
+}
+
+impl Default for AutocompleteConfig {
+  fn default() -> Self {
+    Self {
+      backend: default_autocomplete_backend(),
+      prefer_lsp: default_prefer_lsp(),
+    }
+  }
+}
+
+fn default_autocomplete_backend() -> String {
+  "builtin".to_string()
+}
+
+fn default_prefer_lsp() -> bool {
+  true
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
   #[serde(default, flatten)]
@@ -91,6 +130,10 @@ pub struct Config {
   pub keybindings: KeyBindings,
   #[serde(default)]
   pub styles: Styles,
+  #[serde(default)]
+  pub lsp: LspConfig,
+  #[serde(default)]
+  pub autocomplete: AutocompleteConfig,
 }
 
 impl Config {

@@ -23,7 +23,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::{Component, ComponentKind, Frame};
 use crate::{
   action::Action,
-  autocomplete::{AutocompleteProvider, AutocompleteState},
+  autocomplete::AutocompleteState,
+  autocomplete_engine::AutocompleteEngine,
   components::vim::Vim,
   config::Config,
   editor_common::Mode,
@@ -202,7 +203,7 @@ pub struct Db {
   last_executed_query: Option<String>, // Track last query for history saving
   // Autocomplete functionality
   autocomplete_state: AutocompleteState,
-  autocomplete_provider: AutocompleteProvider,
+  autocomplete_engine: AutocompleteEngine,
   table_columns_cache: HashMap<String, Vec<DbColumn>>,
   // Results search functionality
   results_search_query: String,
@@ -291,7 +292,7 @@ impl Default for Db {
       history_file_path: PathBuf::new(),
       last_executed_query: None,
       autocomplete_state: AutocompleteState::new(),
-      autocomplete_provider: AutocompleteProvider::new(),
+      autocomplete_engine: AutocompleteEngine::new_builtin(),
       table_columns_cache: HashMap::new(),
       results_search_query: String::new(),
       is_searching_results: false,
@@ -328,7 +329,7 @@ impl Db {
 
     // Initialize autocomplete functionality
     instance.autocomplete_state = AutocompleteState::new();
-    instance.autocomplete_provider = AutocompleteProvider::new();
+    instance.autocomplete_engine = AutocompleteEngine::new_builtin();
     instance.table_columns_cache = HashMap::new();
 
     // Load existing history
@@ -1289,6 +1290,33 @@ impl Component for Db {
       self.editor_backend.set_text(&current_text);
     }
 
+    // Update autocomplete backend if changed
+    match config.autocomplete.backend.as_str() {
+      "builtin" => {
+        // Only switch if not already builtin
+        if !matches!(self.autocomplete_engine.backend_name(), "builtin") {
+          self.autocomplete_engine = AutocompleteEngine::new_builtin();
+        }
+      },
+      "lsp" => {
+        // TODO: Initialize LSP client and switch to LSP backend
+        // For now, fallback to builtin
+        if !matches!(self.autocomplete_engine.backend_name(), "builtin") {
+          self.autocomplete_engine = AutocompleteEngine::new_builtin();
+        }
+      },
+      "hybrid" => {
+        // TODO: Initialize hybrid backend with LSP client
+        // For now, fallback to builtin
+        if !matches!(self.autocomplete_engine.backend_name(), "builtin") {
+          self.autocomplete_engine = AutocompleteEngine::new_builtin();
+        }
+      },
+      _ => {
+        // Unknown backend, keep current
+      }
+    }
+
     self.config = config;
     Ok(())
   }
@@ -1528,8 +1556,7 @@ impl Component for Db {
 
           // Handle manual autocomplete trigger (Ctrl+Space)
           if key.code == KeyCode::Char(' ') && key.modifiers.contains(KeyModifiers::CONTROL) && self.editor_backend.mode() == Mode::Insert {
-            self.trigger_autocomplete();
-            return Ok(None);
+            return Ok(Some(Action::TriggerAutocomplete));
           }
 
           // Delegate key handling to the editor backend
@@ -1712,7 +1739,7 @@ impl Component for Db {
         self.tables = tables;
 
         // Update autocomplete provider with all tables
-        self.autocomplete_provider.update_tables(self.tables.clone());
+        self.autocomplete_engine.update_tables(self.tables.clone());
 
         // Reset table selection index to prevent out-of-bounds access after filtering
         if !self.tables.is_empty() {
@@ -1912,6 +1939,15 @@ impl Component for Db {
         // Clear the query editor
         self.editor_backend.set_text("");
       },
+      Action::TriggerAutocomplete => {
+        // Trigger autocomplete with current context
+        self.trigger_autocomplete();
+      },
+      Action::UpdateAutocompleteDocument(_text) => {
+        // For now, we'll ignore LSP document updates since they need async handling
+        // This would be properly implemented with a channel to communicate back
+        // to the main thread when the update is complete
+      },
       _ => {},
     }
     Ok(None)
@@ -1963,7 +1999,23 @@ impl Db {
 
     // Always show suggestions when manually triggered, even for empty current word
     self.autocomplete_state.activate(cursor_pos, current_word.clone());
-    let suggestions = self.autocomplete_provider.get_suggestions(context, &current_word);
+    // For now, we'll use the synchronous method until we implement proper async handling
+    // Get cursor position for LSP (will be used when LSP is implemented)
+    let (_cursor_line, _cursor_col) = self.editor_backend.get_cursor_position();
+    
+    // For now, we only support synchronous autocomplete
+    // The builtin provider works synchronously, but LSP requires async
+    // TODO: Properly handle async autocomplete with channels
+    let suggestions = match self.autocomplete_engine.backend_mut() {
+      crate::autocomplete_engine::AutocompleteBackend::Builtin(provider) => {
+        // Builtin provider can work synchronously
+        provider.get_suggestions(context, &current_word)
+      }
+      _ => {
+        // LSP and hybrid require async, not supported in synchronous context yet
+        vec![]
+      }
+    };
     self.autocomplete_state.update_suggestions(suggestions);
   }
 

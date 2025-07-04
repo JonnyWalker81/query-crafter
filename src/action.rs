@@ -34,4 +34,6 @@ pub enum Action {
   RowDetails,
   SwitchEditor,
   ClearQuery,
+  TriggerAutocomplete,
+  UpdateAutocompleteDocument(String),
 }
