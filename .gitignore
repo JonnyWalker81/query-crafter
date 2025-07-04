@@ -5,3 +5,19 @@
 /test.db
 /node_modules/
 /package-lock.json
+
+# Test and temporary files
+test_*.sh
+test_*.sql
+test_*.js
+test_*.py
+test_*.exp
+*.db
+query_results_*.csv
+write-lsp-config.sh
+.sqllsrc.json
+
+# Temporary documentation
+FINAL_FIX.md
+FORMATTING_CHANGES.md
+VIM_FIXES.md
