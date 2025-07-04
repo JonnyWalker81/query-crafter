@@ -1,0 +1,9 @@
+{
+  "name": "query-crafter-dev",
+  "version": "1.0.0",
+  "description": "Development dependencies for Query Crafter",
+  "private": true,
+  "devDependencies": {
+    "sql-language-server": "^1.7.1"
+  }
+}
