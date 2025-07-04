@@ -8,8 +8,9 @@ use lsp_types::{
     CompletionItem, CompletionParams, CompletionResponse, DidOpenTextDocumentParams,
     InitializeParams, InitializeResult, InitializedParams, Position, TextDocumentIdentifier,
     TextDocumentItem, TextDocumentPositionParams, Url, WorkDoneProgressParams,
+    ExecuteCommandParams,
     notification::{DidOpenTextDocument, Initialized},
-    request::{Completion, Initialize},
+    request::{Completion, Initialize, ExecuteCommand},
 };
 use color_eyre::eyre::{anyhow, Result};
 use tokio::process::{Child, Command};
@@ -51,22 +52,30 @@ impl LspClient {
         }
         
         // Start the server process
+        eprintln!("Starting LSP server with command: {:?}", cmd_parts);
         let mut cmd = Command::new(&cmd_parts[0]);
         if cmd_parts.len() > 1 {
             cmd.args(&cmd_parts[1..]);
         }
-        cmd.stdin(std::process::Stdio::piped())
+        // Set environment to suppress debug output
+        cmd.env("NODE_ENV", "production")
+            .env("DEBUG", "")
+            .env("LOG_LEVEL", "error")
+            .env("SQL_LANGUAGE_SERVER_LOG_LEVEL", "error")
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped()); // Capture stderr for debugging
             
         let mut server_process = cmd.spawn()
             .map_err(|e| anyhow!("Failed to start LSP server '{}': {}", cmd_parts[0], e))?;
         
-        // Get stdin and stdout from the process
+        // Get stdin, stdout, and stderr from the process
         let stdin = server_process.stdin.take()
             .ok_or_else(|| anyhow!("Failed to get stdin from LSP server"))?;
         let stdout = server_process.stdout.take()
             .ok_or_else(|| anyhow!("Failed to get stdout from LSP server"))?;
+        let stderr = server_process.stderr.take()
+            .ok_or_else(|| anyhow!("Failed to get stderr from LSP server"))?;
         
         // Create the LSP client mainloop and server socket
         let (mainloop, server_socket) = MainLoop::new_client(|client| {
@@ -77,6 +86,18 @@ impl LspClient {
         // Store the server socket for communication
         self.client = Some(Arc::new(server_socket));
         self.server_process = Some(server_process);
+        
+        // Spawn a task to log stderr
+        tokio::spawn(async move {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let mut stderr_reader = BufReader::new(stderr);
+            let mut line = String::new();
+            
+            while stderr_reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                eprint!("LSP Server [stderr]: {}", line);
+                line.clear();
+            }
+        });
         
         // Spawn the mainloop task
         let handle = tokio::spawn(async move {
@@ -116,13 +137,15 @@ impl LspClient {
         let init_params = InitializeParams {
             initialization_options: Some(serde_json::json!(self.config.init_options)),
             workspace_folders: Some(vec![lsp_types::WorkspaceFolder {
-                uri: root_uri,
+                uri: root_uri.clone(),
                 name: "query-crafter".to_string(),
             }]),
             ..Default::default()
         };
         
-        let _init_result: InitializeResult = timeout(
+        eprintln!("LSP Client: Sending initialize with root_uri: {}", root_uri);
+        
+        let init_result: InitializeResult = timeout(
             Duration::from_secs(10),
             client.request::<Initialize>(init_params)
         ).await
@@ -132,6 +155,13 @@ impl LspClient {
         client.notify::<Initialized>(InitializedParams {})?;
         
         self.initialized = true;
+        eprintln!("LSP Client: Initialization complete! Server capabilities: {:?}", init_result.capabilities);
+        
+        // Try to switch to the query-crafter database connection
+        if let Err(e) = self.switch_database_connection("query-crafter").await {
+            eprintln!("LSP Client: Failed to switch database connection: {}", e);
+        }
+        
         Ok(())
     }
     
@@ -150,6 +180,15 @@ impl LspClient {
         
         self.client = None;
         self.initialized = false;
+        Ok(())
+    }
+    
+    /// Restart the LSP server with new configuration
+    pub async fn restart(&mut self) -> Result<()> {
+        eprintln!("LSP Client: Restarting LSP server...");
+        self.stop().await?;
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        self.start().await?;
         Ok(())
     }
     
@@ -181,16 +220,18 @@ impl LspClient {
         uri: Url,
         position: Position,
     ) -> Result<Vec<CompletionItem>> {
+        eprintln!("LSP Client: Getting completions at {:?} for {}", position, uri);
         let client = self.client.as_ref()
             .ok_or_else(|| anyhow!("LSP client not started"))?;
         
         if !self.initialized {
+            eprintln!("LSP Client: Not initialized!");
             return Err(anyhow!("LSP not initialized"));
         }
         
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
                 position,
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
@@ -198,24 +239,87 @@ impl LspClient {
             context: None,
         };
         
-        let response: Option<CompletionResponse> = timeout(
+        eprintln!("LSP Client: Sending completion request to LSP server...");
+        let response: Option<CompletionResponse> = match timeout(
             Duration::from_secs(5),
             client.request::<Completion>(params)
-        ).await
-            .map_err(|_| anyhow!("Completion request timed out"))??;
+        ).await {
+            Ok(Ok(response)) => {
+                eprintln!("LSP Client: Got response from server");
+                response
+            },
+            Ok(Err(e)) => {
+                eprintln!("LSP Client: Request error: {}", e);
+                return Err(anyhow!("LSP request error: {}", e));
+            },
+            Err(_) => {
+                eprintln!("LSP Client: Request timed out after 5 seconds");
+                return Err(anyhow!("Completion request timed out"));
+            }
+        };
         
         let items = match response {
-            Some(CompletionResponse::Array(items)) => items,
-            Some(CompletionResponse::List(list)) => list.items,
-            None => vec![],
+            Some(CompletionResponse::Array(items)) => {
+                eprintln!("LSP Client: Got {} completion items (array)", items.len());
+                items
+            },
+            Some(CompletionResponse::List(list)) => {
+                eprintln!("LSP Client: Got {} completion items (list)", list.items.len());
+                list.items
+            },
+            None => {
+                eprintln!("LSP Client: Got no completion response");
+                vec![]
+            },
         };
+        
+        // Log first few items for debugging
+        for (i, item) in items.iter().take(3).enumerate() {
+            eprintln!("LSP Client: Item {}: label='{}', kind={:?}", i, item.label, item.kind);
+        }
         
         Ok(items)
     }
     
     /// Check if the LSP client is running
     pub fn is_running(&self) -> bool {
-        self.client.is_some() && self.initialized
+        let running = self.client.is_some() && self.initialized;
+        eprintln!("LSP Client: is_running check - client: {}, initialized: {}, running: {}", 
+                  self.client.is_some(), self.initialized, running);
+        running
+    }
+    
+    /// Switch to a specific database connection by name
+    async fn switch_database_connection(&self, connection_name: &str) -> Result<()> {
+        let client = self.client.as_ref()
+            .ok_or_else(|| anyhow!("LSP client not started"))?;
+        
+        eprintln!("LSP Client: Executing switchDatabaseConnection command");
+        
+        let params = ExecuteCommandParams {
+            command: "sqlLanguageServer.switchDatabaseConnection".to_string(),
+            arguments: vec![serde_json::json!(connection_name)],
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+        
+        // Execute the command (we don't care about the response)
+        match timeout(
+            Duration::from_secs(2),
+            client.request::<ExecuteCommand>(params)
+        ).await {
+            Ok(Ok(_)) => {
+                eprintln!("LSP Client: Successfully switched database connection");
+                Ok(())
+            },
+            Ok(Err(e)) => {
+                eprintln!("LSP Client: Error switching database: {}", e);
+                Err(anyhow!("Failed to switch database: {}", e))
+            },
+            Err(_) => {
+                eprintln!("LSP Client: Database switch timed out");
+                Err(anyhow!("Database switch timed out"))
+            }
+        }
     }
 }
 

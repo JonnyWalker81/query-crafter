@@ -1,0 +1,29 @@
+---
+source: tests/visual/snapshots.rs
+description: Help popup overlay showing keyboard shortcuts
+expression: output
+---
+╭──────────────────────────────────────────────────────────────────────────────╮
+│Query Crafter - [1] Tables [2] Query [3] Results                              │
+╰───────╭Keyboard Shortcuts (ESC to close)─────────────────────────────╮───────╯
+╭[1] Tab│Navigation                                                    │        
+│       │1/2/3 - Switch between Tables/Query/Results                   │        
+│       │↑/↓/←/→ - Navigate tables/rows/columns                        │───────╮
+│       │j/k/h/l - Vim-style navigation                                │       │
+│       │gg - Jump to first item                                       │       │
+│       │G (Shift+G) - Jump to last item                               │       │
+│       │Ctrl+B - Page up (10 items)                                   │       │
+│       │Ctrl+F - Page down (10 items)                                 │       │
+│       │                                                              │       │
+│       │Tables (Panel 1)                                              │       │
+│       │/ - Search tables                                             │       │
+│       │Enter - Load selected table                                   │       │
+│       │c - View/hide table columns                                   │       │
+│       │s - View/hide table schema                                    │       │
+│       │                                                              │       │
+│       │Query Editor (Panel 2)                                        │       │
+│       │Ctrl+Enter - Execute query                                    │       │
+│       │Ctrl+u - Clear query editor                                   │       │
+│       ╰──────────────────────────────────────────────────────────────╯       │
+│              │╰──────────────────────────────────────────────────────────────╯
+╰──────────────╯╭[3] Results───────────────────────────────────────────────────╮

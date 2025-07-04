@@ -1,0 +1,15 @@
+---
+source: tests/visual/components.rs
+description: Vim editor in insert mode
+expression: output
+---
+"╭Query Editor - INSERT─────────────────╮"
+"│SELECT * FROM users                   │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"╰──────────────────────────────────────╯"

@@ -1,0 +1,20 @@
+---
+source: tests/visual/components.rs
+description: Results table with sample data
+expression: output
+---
+"┌Query Results─────────────────────────────────────────────┐"
+"│id                  name               email              │"
+"│1                   Alice Johnson      alice@example.com  │"
+"│2                   Bob Smith          bob@example.com    │"
+"│3                   Charlie Brown      charlie@example.com│"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"└──────────────────────────────────────────────────────────┘"

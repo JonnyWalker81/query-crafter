@@ -96,7 +96,7 @@ impl AutocompleteState {
 }
 
 /// SQL context information for determining what kind of suggestions to show
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SqlContext {
   None,
   TableName,

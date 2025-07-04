@@ -3,6 +3,7 @@ use crossterm::event::KeyEvent;
 use ratatui::widgets::{Block, BorderType, Borders};
 use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
 use query_crafter_theme as theme;
+use sqlformat::{format, FormatOptions, Indent, QueryParams};
 
 use crate::{
   editor_common::{Mode, Transition},
@@ -10,16 +11,36 @@ use crate::{
 };
 
 // State of Vim emulation
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Vim {
   mode: Mode,
   pending: Input, // Pending input to handle a sequence with two keys like gg
   textarea: TextArea<'static>,
+  auto_format_enabled: bool,
+  format_error: Option<String>,
+}
+
+impl Default for Vim {
+  fn default() -> Self {
+    Self {
+      mode: Mode::default(),
+      pending: Input::default(),
+      textarea: TextArea::default(),
+      auto_format_enabled: true,
+      format_error: None,
+    }
+  }
 }
 
 impl Vim {
   pub fn new(mode: Mode) -> Self {
-    Self { mode, pending: Input::default(), textarea: TextArea::default() }
+    Self { 
+      mode, 
+      pending: Input::default(), 
+      textarea: TextArea::default(),
+      auto_format_enabled: true,
+      format_error: None,
+    }
   }
 
   pub fn mode(&self) -> Mode {
@@ -27,7 +48,13 @@ impl Vim {
   }
 
   pub fn with_pending(self, pending: &Input) -> Self {
-    Self { mode: self.mode, pending: pending.clone(), textarea: self.textarea }
+    Self { 
+      mode: self.mode, 
+      pending: pending.clone(), 
+      textarea: self.textarea,
+      auto_format_enabled: self.auto_format_enabled,
+      format_error: self.format_error,
+    }
   }
 
   fn toggle_line_comment(&mut self) {
@@ -84,6 +111,114 @@ impl Vim {
     }
   }
 
+  /// Format SQL text using sqlformat crate
+  fn format_sql(&mut self, selection_only: bool) -> Result<(), String> {
+    // Get the text to format
+    let text_to_format = if selection_only && self.textarea.is_selecting() {
+      // Get selected text
+      let selection = self.textarea.selection_range();
+      if let Some((start, end)) = selection {
+        let lines = self.textarea.lines();
+        let start_row = start.0;
+        let end_row = end.0;
+        
+        // Extract selected lines
+        let selected_lines: Vec<String> = lines[start_row..=end_row].iter().map(|s| s.to_string()).collect();
+        
+        // Handle partial line selection
+        if start_row == end_row {
+          // Single line selection
+          let line = &selected_lines[0];
+          let start_col = start.1.min(line.len());
+          let end_col = end.1.min(line.len().saturating_sub(1));
+          if start_col <= end_col && start_col < line.len() {
+            line[start_col..=end_col].to_string()
+          } else {
+            line.clone()
+          }
+        } else {
+          // Multi-line selection
+          let mut result = String::new();
+          for (i, line) in selected_lines.iter().enumerate() {
+            if i == 0 {
+              let start_col = start.1.min(line.len());
+              result.push_str(&line[start_col..]);
+            } else if i == selected_lines.len() - 1 {
+              let end_col = end.1.min(line.len().saturating_sub(1));
+              if end_col < line.len() {
+                result.push_str(&line[..=end_col]);
+              } else {
+                result.push_str(line);
+              }
+            } else {
+              result.push_str(line);
+            }
+            if i < selected_lines.len() - 1 {
+              result.push('\n');
+            }
+          }
+          result
+        }
+      } else {
+        return Err("No selection found".to_string());
+      }
+    } else {
+      // Format entire content
+      self.textarea.lines().join("\n")
+    };
+
+    // Configure formatting options
+    let options = FormatOptions {
+      indent: Indent::Spaces(2),
+      uppercase: true,
+      lines_between_queries: 2,
+    };
+    
+    // Format the SQL
+    let formatted = format(&text_to_format, &QueryParams::None, options);
+    
+    if selection_only && self.textarea.is_selecting() {
+      // Replace selection with formatted text
+      self.textarea.cut();
+      for c in formatted.chars() {
+        self.textarea.insert_char(c);
+      }
+    } else {
+      // Replace entire content
+      let cursor = self.textarea.cursor();
+      self.textarea.select_all();
+      self.textarea.cut();
+      for c in formatted.chars() {
+        self.textarea.insert_char(c);
+      }
+      // Try to restore cursor position (approximate since formatting may change position)
+      let (row, col) = cursor;
+      for _ in 0..row {
+        self.textarea.move_cursor(CursorMove::Down);
+      }
+      for _ in 0..col {
+        self.textarea.move_cursor(CursorMove::Forward);
+      }
+    }
+    self.format_error = None;
+    Ok(())
+  }
+
+  /// Toggle auto-format mode
+  pub fn toggle_auto_format(&mut self) {
+    self.auto_format_enabled = !self.auto_format_enabled;
+  }
+  
+  /// Get auto-format status
+  pub fn is_auto_format_enabled(&self) -> bool {
+    self.auto_format_enabled
+  }
+  
+  /// Get last format error if any
+  pub fn get_format_error(&self) -> Option<&str> {
+    self.format_error.as_deref()
+  }
+
   pub fn transition(&mut self, input: Input) -> Transition {
     if input.key == Key::Null {
       return Transition::Nop;
@@ -92,15 +227,42 @@ impl Vim {
     match self.mode {
       Mode::Normal | Mode::Visual | Mode::Operator(_) => {
         match input {
-          Input { key: Key::Char('h'), .. } => self.textarea.move_cursor(CursorMove::Back),
-          Input { key: Key::Char('j'), .. } => self.textarea.move_cursor(CursorMove::Down),
-          Input { key: Key::Char('k'), .. } => self.textarea.move_cursor(CursorMove::Up),
-          Input { key: Key::Char('l'), .. } => self.textarea.move_cursor(CursorMove::Forward),
-          Input { key: Key::Char('w'), .. } => self.textarea.move_cursor(CursorMove::WordForward),
-          Input { key: Key::Char('b'), ctrl: false, .. } => self.textarea.move_cursor(CursorMove::WordBack),
-          Input { key: Key::Char('^'), .. } => self.textarea.move_cursor(CursorMove::Head),
-          Input { key: Key::Char('0'), .. } => self.textarea.move_cursor(CursorMove::Head),
-          Input { key: Key::Char('$'), .. } => self.textarea.move_cursor(CursorMove::End),
+          Input { key: Key::Char('h'), .. } => {
+            self.textarea.move_cursor(CursorMove::Back);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('j'), .. } => {
+            self.textarea.move_cursor(CursorMove::Down);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('k'), .. } => {
+            self.textarea.move_cursor(CursorMove::Up);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('l'), .. } => {
+            self.textarea.move_cursor(CursorMove::Forward);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('w'), .. } => {
+            self.textarea.move_cursor(CursorMove::WordForward);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('b'), ctrl: false, .. } => {
+            self.textarea.move_cursor(CursorMove::WordBack);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('^'), .. } => {
+            self.textarea.move_cursor(CursorMove::Head);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('0'), .. } => {
+            self.textarea.move_cursor(CursorMove::Head);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('$'), .. } => {
+            self.textarea.move_cursor(CursorMove::End);
+            return Transition::Nop;
+          },
           Input { key: Key::Char('D'), .. } => {
             self.textarea.delete_line_by_end();
             return Transition::Mode(Mode::Normal);
@@ -162,7 +324,7 @@ impl Vim {
             self.textarea.cancel_selection();
             return Transition::Mode(Mode::Insert);
           },
-          Input { key: Key::Char('a'), .. } => {
+          Input { key: Key::Char('a'), .. } if self.mode != Mode::Operator('=') => {
             self.textarea.cancel_selection();
             self.textarea.move_cursor(CursorMove::Forward);
             return Transition::Mode(Mode::Insert);
@@ -195,10 +357,22 @@ impl Vim {
           Input { key: Key::Char('y'), ctrl: true, .. } => {
             return Transition::Action(crate::action::Action::ExecuteQuery);
           },
-          Input { key: Key::Char('d'), ctrl: true, .. } => self.textarea.scroll(Scrolling::HalfPageDown),
-          Input { key: Key::Char('u'), ctrl: true, .. } => self.textarea.scroll(Scrolling::HalfPageUp),
-          Input { key: Key::Char('f'), ctrl: true, .. } => self.textarea.scroll(Scrolling::PageDown),
-          Input { key: Key::Char('b'), ctrl: true, .. } => self.textarea.scroll(Scrolling::PageUp),
+          Input { key: Key::Char('d'), ctrl: true, .. } => {
+            self.textarea.scroll(Scrolling::HalfPageDown);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('u'), ctrl: true, .. } => {
+            self.textarea.scroll(Scrolling::HalfPageUp);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('f'), ctrl: true, .. } => {
+            self.textarea.scroll(Scrolling::PageDown);
+            return Transition::Nop;
+          },
+          Input { key: Key::Char('b'), ctrl: true, .. } => {
+            self.textarea.scroll(Scrolling::PageUp);
+            return Transition::Nop;
+          },
           Input { key: Key::Char('v'), ctrl: false, .. } if self.mode == Mode::Normal => {
             self.textarea.start_selection();
             return Transition::Mode(Mode::Visual);
@@ -214,19 +388,32 @@ impl Vim {
             return Transition::Mode(Mode::Normal);
           },
           Input { key: Key::Char('g'), ctrl: false, .. }
-            if matches!(self.pending, Input { key: Key::Char('g'), ctrl: false, .. }) =>
+            if self.mode == Mode::Operator('g') =>
           {
-            self.textarea.move_cursor(CursorMove::Top)
+            self.textarea.move_cursor(CursorMove::Top);
+            return Transition::Mode(Mode::Normal);
           },
-          Input { key: Key::Char('G'), ctrl: false, .. } => self.textarea.move_cursor(CursorMove::Bottom),
+          Input { key: Key::Char('G'), ctrl: false, .. } if self.mode != Mode::Operator('=') => {
+            self.textarea.move_cursor(CursorMove::Bottom);
+            return Transition::Nop;
+          },
           Input { key: Key::Char(c), ctrl: false, .. } if self.mode == Mode::Operator(c) => {
-            // Handle yy, dd, cc. (This is not strictly the same behavior as Vim)
-            self.textarea.move_cursor(CursorMove::Head);
-            self.textarea.start_selection();
-            let cursor = self.textarea.cursor();
-            self.textarea.move_cursor(CursorMove::Down);
-            if cursor == self.textarea.cursor() {
-              self.textarea.move_cursor(CursorMove::End); // At the last line, move to end of the line instead
+            // Handle yy, dd, cc, ==
+            if c == '=' {
+              // For == format entire query
+              match self.format_sql(false) {
+                Ok(_) => return Transition::Mode(Mode::Normal),
+                Err(e) => return Transition::Action(crate::action::Action::Error(e)),
+              }
+            } else {
+              // For yy, dd, cc - select current line
+              self.textarea.move_cursor(CursorMove::Head);
+              self.textarea.start_selection();
+              let cursor = self.textarea.cursor();
+              self.textarea.move_cursor(CursorMove::Down);
+              if cursor == self.textarea.cursor() {
+                self.textarea.move_cursor(CursorMove::End); // At the last line, move to end of the line instead
+              }
             }
           },
           Input { key: Key::Char(op @ ('y' | 'd' | 'c')), ctrl: false, .. } if self.mode == Mode::Normal => {
@@ -235,6 +422,39 @@ impl Vim {
           },
           Input { key: Key::Char('g'), ctrl: false, .. } if self.mode == Mode::Normal => {
             return Transition::Mode(Mode::Operator('g'));
+          },
+          // Format operator
+          Input { key: Key::Char('='), ctrl: false, .. } if self.mode == Mode::Normal => {
+            // Enter format operator mode (don't start selection like y/d/c)
+            return Transition::Mode(Mode::Operator('='));
+          },
+          // Format in visual mode
+          Input { key: Key::Char('='), ctrl: false, .. } if self.mode == Mode::Visual => {
+            match self.format_sql(true) {
+              Ok(_) => {
+                self.textarea.cancel_selection();
+                return Transition::Mode(Mode::Normal);
+              }
+              Err(e) => return Transition::Action(crate::action::Action::Error(e)),
+            }
+          },
+          // Handle =G to format from cursor to end
+          Input { key: Key::Char('G'), ctrl: false, .. } if self.mode == Mode::Operator('=') => {
+            // For simplicity, format entire document
+            match self.format_sql(false) {
+              Ok(_) => return Transition::Mode(Mode::Normal),
+              Err(e) => return Transition::Action(crate::action::Action::Error(e)),
+            }
+          },
+          // Toggle auto-format with =a
+          Input { key: Key::Char('a'), ctrl: false, .. } if self.mode == Mode::Operator('=') => {
+            self.toggle_auto_format();
+            let msg = if self.auto_format_enabled {
+              "Auto-format enabled"
+            } else {
+              "Auto-format disabled"
+            };
+            return Transition::Action(crate::action::Action::Error(msg.to_string()));
           },
           Input { key: Key::Char('y'), ctrl: false, .. } if self.mode == Mode::Visual => {
             self.textarea.copy();
@@ -256,7 +476,7 @@ impl Vim {
           },
           // Handle gcc command for commenting
           Input { key: Key::Char('c'), ctrl: false, .. }
-            if matches!(self.pending, Input { key: Key::Char('g'), ctrl: false, .. }) =>
+            if self.mode == Mode::Operator('g') =>
           {
             self.toggle_line_comment();
             return Transition::Mode(Mode::Normal);
@@ -295,6 +515,11 @@ impl Vim {
             // proper handling is done in the main match above
             Transition::Mode(Mode::Normal)
           },
+          Mode::Operator('=') => {
+            // Handle '=' operator - format operations
+            // Specific handling is done in the main match above
+            Transition::Mode(Mode::Normal)
+          },
           _ => Transition::Nop,
         }
       },
@@ -303,6 +528,12 @@ impl Vim {
           Input { key: Key::Esc, .. } | Input { key: Key::Char('c'), ctrl: true, .. } => Transition::Mode(Mode::Normal),
           Input { key: Key::Char('e'), ctrl: true, .. } => Transition::Action(crate::action::Action::ExecuteQuery),
           Input { key: Key::Char('y'), ctrl: true, .. } => Transition::Action(crate::action::Action::ExecuteQuery),
+          Input { key: Key::Char('u'), ctrl: true, .. } => {
+            // Clear entire line from beginning to cursor
+            self.textarea.move_cursor(CursorMove::Head);
+            self.textarea.delete_line_by_end();
+            Transition::Mode(Mode::Insert)
+          },
           input => {
             self.textarea.input(input); // Use default key mappings in insert mode
             Transition::Mode(Mode::Insert)
@@ -388,16 +619,24 @@ impl EditorComponent for Vim {
     let transition = self.transition(input);
 
     match transition {
-      Transition::Mode(mode) if self.mode != mode => {
-        self.textarea.set_cursor_style(mode.cursor_style());
-        self.mode = mode;
+      Transition::Mode(mode) => {
+        if self.mode != mode {
+          self.textarea.set_cursor_style(mode.cursor_style());
+          self.mode = mode;
+        }
+        self.pending = Input::default(); // Clear pending after any mode transition
       },
-      Transition::Nop | Transition::Mode(_) => {},
+      Transition::Nop => {
+        // Don't clear pending for Nop transitions
+      },
       Transition::Pending(ref input) => {
         self.pending = input.clone();
       },
       Transition::Quit => return Ok(Some(crate::action::Action::Quit)),
-      Transition::Action(action) => return Ok(Some(action)),
+      Transition::Action(action) => {
+        self.pending = Input::default(); // Clear pending after action
+        return Ok(Some(action));
+      },
     }
 
     Ok(None)
@@ -462,6 +701,16 @@ impl EditorComponent for Vim {
 }
 
 impl Vim {
+  /// Format the entire query or selection
+  pub fn format_query(&mut self, selection_only: bool) -> Result<(), String> {
+    self.format_sql(selection_only)
+  }
+  
+  /// Format entire query
+  pub fn format_all(&mut self) -> Result<(), String> {
+    self.format_sql(false)
+  }
+  
   /// Get the current cursor position (row, col)
   pub fn get_cursor_position(&self) -> (usize, usize) {
     self.textarea.cursor()

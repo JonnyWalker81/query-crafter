@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use strum::Display;
 
-use crate::components::{db::DbTable, ComponentKind};
+use crate::components::{db::{DbColumn, DbTable}, ComponentKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Display, Deserialize)]
 pub enum Action {
@@ -24,6 +24,9 @@ pub enum Action {
   LoadSelectedTable,
   LoadTables(String),
   LoadTable(String),
+  ViewTableColumns,
+  ViewTableSchema,
+  TableColumnsLoaded(String, Vec<DbColumn>), // table_name, columns
   QueryResult(Vec<String>, Vec<Vec<String>>),
   FocusQuery,
   FocusResults,
@@ -31,9 +34,31 @@ pub enum Action {
   SelectComponent(ComponentKind),
   ExecuteQuery,
   HandleQuery(String),
+  QueryStarted,
+  QueryCompleted,
   RowDetails,
   SwitchEditor,
   ClearQuery,
   TriggerAutocomplete,
   UpdateAutocompleteDocument(String),
+  RequestAutocomplete {
+    text: String,
+    cursor_line: usize,
+    cursor_col: usize,
+    context: String, // Serialized SqlContext
+  },
+  AutocompleteResults(Vec<(String, String)>), // Vec of (text, kind)
+  SetTunnelMode(bool), // Notify components about tunnel mode
+  ExportResultsToCsv,
+  RowJumpToTop,
+  RowJumpToBottom,
+  TableJumpToTop,
+  TableJumpToBottom,
+  RowPageUp,
+  RowPageDown,
+  TablePageUp,
+  TablePageDown,
+  FormatQuery,
+  FormatSelection,
+  ToggleAutoFormat,
 }

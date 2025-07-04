@@ -1,0 +1,15 @@
+---
+source: tests/visual/components.rs
+description: Vim editor in visual mode
+expression: output
+---
+"╭Query Editor - VISUAL─────────────────╮"
+"│SELECT * FROM users                   │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"╰──────────────────────────────────────╯"

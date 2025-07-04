@@ -527,6 +527,11 @@ impl TunnelManager {
             "postgresql://{username}:{password}@localhost:{local_port}/{database}?sslmode=require"
         ))
     }
+    
+    /// Get the local port of the tunnel
+    pub fn get_local_port(&self) -> Option<u16> {
+        self.local_port
+    }
 
     /// Health check for the tunnel
     pub async fn health_check(&self) -> bool {

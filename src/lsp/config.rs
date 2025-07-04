@@ -51,7 +51,18 @@ fn default_server_name() -> String {
 }
 
 fn default_server_command() -> String {
-    "sql-language-server".to_string()
+    // First check if sql-lsp-wrapper is in the same directory as query-crafter
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            let wrapper_path = parent.join("sql-lsp-wrapper");
+            if wrapper_path.exists() {
+                return wrapper_path.to_string_lossy().to_string();
+            }
+        }
+    }
+    
+    // Fall back to PATH
+    "sql-lsp-wrapper".to_string()
 }
 
 fn default_trigger_characters() -> Vec<String> {
@@ -64,14 +75,20 @@ impl LspConfig {
         let mut cmd = vec![self.server_command.clone()];
         cmd.extend(self.server_args.clone());
         
-        // Add specific args for known servers
-        match self.server_name.as_str() {
-            "sql-language-server" => {
-                cmd.push("up".to_string());
-                cmd.push("--method".to_string());
-                cmd.push("stdio".to_string());
+        // Don't add args if using the wrapper - it handles them internally
+        if !self.server_command.contains("wrapper") {
+            // Add specific args for known servers
+            match self.server_name.as_str() {
+                "sql-language-server" => {
+                    cmd.push("up".to_string());
+                    cmd.push("--method".to_string());
+                    cmd.push("stdio".to_string());
+                    // Explicitly disable debug mode
+                    cmd.push("--debug".to_string());
+                    cmd.push("false".to_string());
+                }
+                _ => {}
             }
-            _ => {}
         }
         
         cmd

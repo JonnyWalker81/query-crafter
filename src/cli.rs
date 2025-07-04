@@ -78,6 +78,10 @@ pub struct Cli {
 
   #[arg(long = "use-session-manager", help = "Force use of AWS Session Manager for SSH connection")]
   pub use_session_manager: bool,
+
+  // LSP setup
+  #[arg(long = "patch-lsp", help = "Apply patches to sql-language-server for LSP support")]
+  pub patch_lsp: bool,
 }
 
 impl Cli {

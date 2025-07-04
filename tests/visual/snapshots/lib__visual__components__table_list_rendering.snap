@@ -1,0 +1,20 @@
+---
+source: tests/visual/components.rs
+description: Table list with sample tables
+expression: output
+---
+"┌Tables──────────────────────┐"
+"│users                       │"
+"│posts                       │"
+"│comments                    │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"│                            │"
+"└────────────────────────────┘"

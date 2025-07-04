@@ -106,7 +106,8 @@ impl Queryer for Sqlite {
       results.push(row_result);
     }
 
-    dispatch(tx, Action::QueryResult(headers, results)).await?;
+    dispatch(tx.clone(), Action::QueryResult(headers, results)).await?;
+    dispatch(tx, Action::QueryCompleted).await?;
 
     Ok(())
   }
@@ -208,7 +209,8 @@ impl Queryer for Postgres {
       results.push(row_result);
     }
 
-    dispatch(tx, Action::QueryResult(headers, results)).await?;
+    dispatch(tx.clone(), Action::QueryResult(headers, results)).await?;
+    dispatch(tx, Action::QueryCompleted).await?;
 
     Ok(())
   }

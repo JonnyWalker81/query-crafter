@@ -1,112 +1,100 @@
-# SQL Language Server Protocol (LSP) Support
+# LSP Autocomplete Setup
 
-Query Crafter supports SQL Language Server Protocol for enhanced autocomplete functionality. This provides more accurate completions, syntax checking, and other IDE-like features.
+Query Crafter supports SQL Language Server Protocol (LSP) for intelligent autocomplete with database-aware suggestions.
 
 ## Installation
 
-### 1. Install SQL Language Server
+1. Install sql-language-server globally:
+   ```bash
+   npm install -g sql-language-server
+   ```
 
-First, install a SQL language server. We recommend `sql-language-server`:
+2. After installing query-crafter, run the patch script:
+   ```bash
+   # If installed via cargo install
+   ~/.cargo/bin/query-crafter --patch-lsp
+   
+   # Or run the script directly
+   ./scripts/patch-sql-lsp.sh
+   ```
 
-```bash
-npm install -g sql-language-server
-```
+   The patches fix known issues in sql-language-server:
+   - Removes debug output that interferes with LSP protocol
+   - Fixes logging configuration
+   - Adds safety checks for configuration handling
 
-### 2. Configure Query Crafter
+## Configuration
 
-Update your `config.toml` to enable LSP:
+1. Create a `.sqllsrc.json` file in your project root:
+   ```json
+   {
+     "connections": [
+       {
+         "name": "default",
+         "adapter": "postgres",
+         "host": "localhost",
+         "port": 5432,
+         "user": "postgres",
+         "password": "your_password",
+         "database": "your_database",
+         "projectPaths": ["/path/to/your/project"]
+       }
+     ]
+   }
+   ```
 
-```toml
-[autocomplete]
-backend = "lsp"  # or "hybrid" for both LSP and builtin
+2. Enable LSP in your `~/.config/query-crafter/config.toml`:
+   ```toml
+   [autocomplete]
+   backend = "lsp"  # or "hybrid" for both LSP and builtin
 
-[lsp]
-enabled = true
-server_command = "sql-language-server"
-```
+   [lsp]
+   enabled = true
+   ```
 
-## Configuration Options
+## Usage
 
-### Autocomplete Backends
-
-- **builtin**: Uses the built-in fuzzy matching autocomplete (default)
-- **lsp**: Uses only the Language Server Protocol
-- **hybrid**: Uses both LSP and builtin, preferring LSP when available
-
-### LSP Configuration
-
-```toml
-[lsp]
-enabled = true                          # Enable/disable LSP
-server_name = "sql-language-server"     # Server identifier
-server_command = "sql-language-server"  # Command to launch
-server_args = []                        # Additional command arguments
-trigger_characters = [".", " "]         # Characters that trigger completion
-```
-
-### SQL Language Server Configuration
-
-Create a `.sqllsrc.json` file in your project root:
-
-```json
-{
-  "connections": [
-    {
-      "name": "default",
-      "adapter": "postgres",
-      "host": "localhost",
-      "port": 5432,
-      "user": "postgres",
-      "database": "mydb"
-    }
-  ]
-}
-```
-
-## Features
-
-When LSP is enabled, you get:
-
-- **Context-aware completions**: Table names, column names, SQL keywords
-- **Hover information**: Details about tables and columns
-- **Signature help**: Function parameter hints
-- **Diagnostics**: Syntax error detection (coming soon)
+1. Start query-crafter
+2. In the query editor, type SQL and press `Ctrl+Space` to trigger autocomplete
+3. The LSP will provide:
+   - Table names from your connected database
+   - Column names when typing after a table name
+   - SQL keywords and functions
 
 ## Troubleshooting
 
-### LSP Server Not Found
+If LSP autocomplete isn't working:
 
-If you get an error about the LSP server not being found:
+1. Check that sql-language-server is installed:
+   ```bash
+   which sql-language-server
+   ```
 
-1. Ensure the server is installed globally
-2. Check that it's in your PATH
-3. Try using the full path in `server_command`
+2. Verify patches were applied:
+   ```bash
+   ./scripts/patch-sql-lsp.sh
+   ```
 
-### No Completions Appearing
+3. Check LSP logs:
+   ```bash
+   tail -f /tmp/sql-language-server.log
+   ```
 
-1. Check that LSP is enabled in your config
-2. Verify the server is running (check logs)
-3. Ensure your `.sqllsrc.json` is properly configured
+4. Ensure your `.sqllsrc.json` is valid JSON and in the project root
 
-### Performance Issues
+5. Try the builtin sql-lsp-wrapper:
+   - The wrapper is automatically used if found in the same directory as query-crafter
+   - It filters out debug messages that can interfere with the LSP protocol
 
-If LSP completions are slow:
+## Alternative: Using sql-lsp-wrapper
 
-1. Try the "hybrid" backend to fall back to builtin when needed
-2. Adjust the completion timeout in future versions
-3. Check your language server's performance settings
+If patching doesn't work or you prefer not to modify the global installation, query-crafter includes a built-in wrapper that filters problematic output:
 
-## Supported Language Servers
+```toml
+# In ~/.config/query-crafter/config.toml
+[lsp]
+enabled = true
+server_command = "sql-lsp-wrapper"  # Uses the built-in wrapper
+```
 
-Currently tested with:
-- `sql-language-server` (recommended)
-
-Other SQL language servers may work but are untested.
-
-## Future Enhancements
-
-- Support for multiple language servers
-- Diagnostic error display in the editor
-- Code formatting support
-- Go to definition for tables/views
-- Rename refactoring
+The wrapper is automatically installed alongside query-crafter when using `cargo install`.

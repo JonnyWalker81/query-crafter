@@ -1,0 +1,15 @@
+---
+source: tests/visual/components.rs
+description: Vim editor in normal mode
+expression: output
+---
+"╭Query Editor - NORMAL─────────────────╮"
+"│SELECT * FROM users                   │"
+"│WHERE active = true                   │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"╰──────────────────────────────────────╯"

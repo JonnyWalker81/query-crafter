@@ -9,6 +9,8 @@
       "<up>": "TableMoveUp",
       "<down>": "TableMoveDown",
       "<enter>": "LoadSelectedTable",
+      "<c>": "ViewTableColumns",
+      "<s>": "ViewTableSchema",
       "<tab>": "FocusQuery",
       "<Ctrl-q>": "Quit", // Quit the application
       "<Ctrl-d>": "Quit", // Another way to quit

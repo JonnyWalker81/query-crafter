@@ -1,0 +1,25 @@
+---
+source: tests/visual/components.rs
+description: Help content display
+expression: output
+---
+"┌Help──────────────────────────────────────────────────────┐"
+"│Navigation                                                │"
+"│                                                          │"
+"│j/k     - Move up/down                                    │"
+"│gg      - Jump to top                                     │"
+"│G       - Jump to bottom                                  │"
+"│                                                          │"
+"│Query Editor                                              │"
+"│                                                          │"
+"│==      - Format entire query                             │"
+"│=       - Format selection (visual)                       │"
+"│Ctrl+Enter - Execute query                                │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"│                                                          │"
+"└──────────────────────────────────────────────────────────┘"

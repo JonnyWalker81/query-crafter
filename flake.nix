@@ -74,6 +74,9 @@
           hyperfine
           just
           bacon
+          
+          # SQL Language Server (install via npm if needed)
+          # nodePackages.sql-language-server # Not available in nixpkgs yet
 
           # Database clients (for testing)
           postgresql
@@ -105,6 +108,11 @@
             inherit nativeBuildInputs buildInputs;
 
             shellHook = ''
+              # Add local node_modules/.bin to PATH if it exists
+              if [ -d "$PWD/node_modules/.bin" ]; then
+                export PATH="$PWD/node_modules/.bin:$PATH"
+              fi
+              
               echo "Query Crafter Development Environment"
               echo "====================================="
               echo "Rust: $(rustc --version)"
@@ -118,6 +126,14 @@
               echo "  cargo watch -x run       - Run with auto-reload"
               echo "  cargo nextest run        - Run tests with nextest"
               echo "  bacon                    - Run bacon for continuous checking"
+              echo ""
+              
+              # Check if sql-language-server is available
+              if command -v sql-language-server &> /dev/null; then
+                echo "SQL Language Server: $(sql-language-server --version)"
+              else
+                echo "SQL LSP: Not installed (run 'npm install' to install)"
+              fi
               echo ""
             '';
 

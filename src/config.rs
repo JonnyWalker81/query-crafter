@@ -41,6 +41,12 @@ fn load_default_config() -> Result<String> {
       "<up>": "TableMoveUp",
       "<down>": "TableMoveDown",
       "<enter>": "LoadSelectedTable",
+      "<c>": "ViewTableColumns",
+      "<s>": "ViewTableSchema",
+      "<shift-g>": "TableJumpToBottom",
+      "<g><g>": "TableJumpToTop",
+      "<Ctrl-b>": "TablePageUp",
+      "<Ctrl-f>": "TablePageDown",
       "<tab>": "FocusQuery",
       "<Ctrl-q>": "Quit",
       "<Ctrl-d>": "Quit",
@@ -67,6 +73,11 @@ fn load_default_config() -> Result<String> {
       "<right>": "ScrollTableRight",
       "<enter>": "RowDetails",
       "<Ctrl-q>": "Quit",
+      "<Ctrl-s>": "ExportResultsToCsv",
+      "<shift-g>": "RowJumpToBottom",
+      "<g><g>": "RowJumpToTop",
+      "<Ctrl-b>": "RowPageUp",
+      "<Ctrl-f>": "RowPageDown",
       "<tab>": "FocusHome"
     }
   }

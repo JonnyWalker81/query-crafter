@@ -1,0 +1,25 @@
+---
+source: tests/visual/components.rs
+description: Error popup overlay
+expression: output
+---
+"┌Main Content────────────────────────────────────┐"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│         ┌Error───────────────────────┐         │"
+"│         │Error: Connection to databas│         │"
+"│         │Please check your credential│         │"
+"│         └────────────────────────────┘         │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"│                                                │"
+"└────────────────────────────────────────────────┘"

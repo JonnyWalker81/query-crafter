@@ -1,0 +1,16 @@
+--- a/complete.js
++++ b/complete.js
+@@ -310,11 +310,11 @@
+     }
+ }
+ function complete(sql, pos, schema = { tables: [], functions: [] }, jupyterLabMode = false) {
+-    console.time('complete');
++    // console.time('complete');  // Disabled to prevent stdout pollution
+     if (logger.isDebugEnabled())
+         logger.debug(`complete: ${sql}, ${JSON.stringify(pos)}`);
+     const completer = new Completer(schema, sql, pos, jupyterLabMode);
+     const candidates = completer.complete();
+-    console.timeEnd('complete');
++    // console.timeEnd('complete');  // Disabled to prevent stdout pollution
+     return { candidates: candidates, error: completer.error };
+ }

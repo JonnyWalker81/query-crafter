@@ -43,6 +43,18 @@ pub struct App {
   pub last_tick_key_events: Vec<KeyEvent>,
   db: Arc<dyn Queryer>,
   tunnel_manager: Option<TunnelManager>,
+  lsp_service: Option<crate::lsp::LspService>,
+  connection_info: Option<ConnectionInfo>,
+}
+
+#[derive(Clone)]
+struct ConnectionInfo {
+  host: String,
+  port: u16,
+  username: String,
+  password: String,
+  database: String,
+  adapter: String,
 }
 
 // Load config at runtime to prevent constant rebuilds
@@ -103,6 +115,7 @@ impl App {
     let mode = Mode::Home;
 
     let mut tunnel_manager = None;
+    let mut connection_info = None;
 
     let db_conn = if cli_args.is_sqlite_mode() {
       // SQLite mode - using -f/--file flag
@@ -120,7 +133,7 @@ impl App {
         // PostgreSQL mode with database name
         if cli_args.is_tunnel_mode() {
           // Tunnel mode
-          Self::connect_via_tunnel(cli_args, db_name, &mut tunnel_manager).await?
+          Self::connect_via_tunnel(cli_args, db_name, &mut tunnel_manager, &mut connection_info).await?
         } else {
           // Direct connection
           Self::connect_direct(cli_args).await?
@@ -131,7 +144,7 @@ impl App {
       if cli_args.is_tunnel_mode() {
         // Tunnel mode with default database
         let db_name = cli_args.get_database_name().map(|s| s.as_str()).unwrap_or("postgres");
-        Self::connect_via_tunnel(cli_args, db_name, &mut tunnel_manager).await?
+        Self::connect_via_tunnel(cli_args, db_name, &mut tunnel_manager, &mut connection_info).await?
       } else {
         // Direct connection
         Self::connect_direct(cli_args).await?
@@ -150,6 +163,8 @@ impl App {
       last_tick_key_events: Vec::new(),
       db: db_conn,
       tunnel_manager,
+      lsp_service: None, // Will be initialized in run() when we have action_tx
+      connection_info, // Set during connection establishment
     })
   }
 
@@ -184,6 +199,7 @@ impl App {
     cli_args: &crate::cli::Cli,
     database: &str,
     tunnel_manager: &mut Option<TunnelManager>,
+    connection_info: &mut Option<ConnectionInfo>,
   ) -> Result<Arc<dyn Queryer>> {
     // Validate required parameters
     let environment =
@@ -236,6 +252,18 @@ impl App {
     let _pool = PgPoolOptions::new().max_connections(5).connect(&connection).await?;
     let pg_conn = Arc::new(crate::sql::Postgres::new(&connection).await?);
 
+    // Store connection info for LSP
+    if let Some(local_port) = tunnel.get_local_port() {
+      *connection_info = Some(ConnectionInfo {
+        host: "localhost".to_string(),
+        port: local_port,
+        username: username.to_string(),
+        password: password.clone(),
+        database: database.to_string(),
+        adapter: "postgres".to_string(),
+      });
+    }
+
     // Store tunnel manager to keep it alive
     *tunnel_manager = Some(tunnel);
 
@@ -244,6 +272,38 @@ impl App {
 
   pub async fn run(&mut self) -> Result<()> {
     let (action_tx, mut action_rx) = mpsc::unbounded_channel();
+
+    // Check if we're in tunnel mode
+    let is_tunnel_mode = self.tunnel_manager.is_some();
+    
+    // Initialize LSP service if configured and not in tunnel mode
+    if self.config.lsp.enabled && self.config.autocomplete.backend != "builtin" && !is_tunnel_mode {
+      eprintln!("Initializing LSP service...");
+      
+      // Write database connection info for LSP if we have it
+      if let Some(conn_info) = self.get_current_connection_info() {
+        eprintln!("Writing LSP database configuration...");
+        if let Err(e) = self.write_lsp_config(&conn_info).await {
+          eprintln!("Warning: Failed to write LSP config: {}", e);
+        } else {
+          // Give sql-language-server time to potentially detect the new config
+          tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+      }
+      
+      match crate::lsp::LspService::new(self.config.lsp.clone(), action_tx.clone()).await {
+        Ok(service) => {
+          eprintln!("LSP service initialized successfully");
+          self.lsp_service = Some(service);
+        }
+        Err(e) => {
+          eprintln!("Failed to initialize LSP service: {}. Falling back to builtin autocomplete.", e);
+          // Continue without LSP
+        }
+      }
+    } else if is_tunnel_mode && self.config.autocomplete.backend != "builtin" {
+      eprintln!("SSH tunnel detected - using builtin autocomplete for better compatibility");
+    }
 
     let mut tui = tui::Tui::new()?.tick_rate(self.tick_rate).frame_rate(self.frame_rate);
     // tui.mouse(true);
@@ -260,6 +320,11 @@ impl App {
     for component in self.components.iter_mut() {
       component.init(Rect::default())?;
     }
+    
+    // Notify components about tunnel mode
+    if is_tunnel_mode {
+      action_tx.send(Action::SetTunnelMode(true))?;
+    }
 
     init(action_tx.clone(), self.db.clone()).await?;
 
@@ -271,10 +336,12 @@ impl App {
           tui::Event::Render => action_tx.send(Action::Render)?,
           tui::Event::Resize(x, y) => action_tx.send(Action::Resize(x, y))?,
           tui::Event::Key(key) => {
+            let mut handled = false;
             if let Some(keymap) = self.config.keybindings.get(&self.mode) {
               if let Some(action) = keymap.get(&vec![key]) {
                 log::info!("Got action: {action:?}");
                 action_tx.send(action.clone())?;
+                handled = true;
               } else {
                 // If the key was not handled as a single key action,
                 // then consider it for multi-key combinations.
@@ -284,11 +351,15 @@ impl App {
                 if let Some(action) = keymap.get(&self.last_tick_key_events) {
                   log::info!("Got action: {action:?}");
                   action_tx.send(action.clone())?;
+                  handled = true;
                 }
               }
             };
 
-            // Editor key events are now handled by the Db component's editor backend
+            // If the key was handled by keybindings, don't pass it to components
+            if handled {
+              continue;
+            }
           },
           _ => {},
         }
@@ -332,9 +403,15 @@ impl App {
             })?;
           },
           Action::LoadTable(ref table_name) => {
-            // println!("Load Table: {}", table_name);
-            let q = format!("SELECT * from {table_name}");
-            query(&q, action_tx.clone(), self.db.clone()).await?;
+            // Load columns for the table
+            // Find the schema from the tables list in the first component (Db)
+            let schema = "public";
+            if let Some(_db_component) = self.components.first() {
+              // This is a bit of a hack - we need access to the table schema
+              // For now, assume public schema for PostgreSQL
+              // For SQLite, the schema is always "public" as set in load_tables
+            }
+            load_table_columns(table_name, schema, action_tx.clone(), self.db.clone()).await?;
           },
           Action::LoadTables(ref search) => {
             // println!("Load Tables");
@@ -354,6 +431,9 @@ impl App {
             }
           },
           Action::HandleQuery(ref q) => {
+            // Send query started notification
+            dispatch(action_tx.clone(), Action::QueryStarted).await?;
+            
             if let Err(e) = query(q, action_tx.clone(), self.db.clone()).await {
               dispatch(action_tx.clone(), Action::Error(format!("Error executing query: {e:?}"))).await?;
             }
@@ -361,6 +441,30 @@ impl App {
           Action::SwitchEditor => {
             // Editor switching is now handled by the Db component's editor backend configuration
             // This could be implemented by updating the config and calling register_config_handler
+          },
+          Action::RequestAutocomplete { ref text, cursor_line, cursor_col, ref context } => {
+            if let Some(lsp_service) = &self.lsp_service {
+              eprintln!("Processing LSP autocomplete request...");
+              // Handle autocomplete request asynchronously
+              if let Err(e) = lsp_service.handle_autocomplete_request(
+                text.clone(),
+                cursor_line,
+                cursor_col,
+                context.clone(),
+              ).await {
+                eprintln!("LSP autocomplete error: {}", e);
+              }
+            } else {
+              eprintln!("LSP service not available for autocomplete");
+            }
+          },
+          Action::UpdateAutocompleteDocument(ref text) => {
+            if let Some(lsp_service) = &self.lsp_service {
+              // Update document in LSP service
+              if let Err(e) = lsp_service.update_document(text.clone()).await {
+                eprintln!("Failed to update LSP document: {}", e);
+              }
+            }
           },
           _ => {},
         }
@@ -391,6 +495,43 @@ impl App {
 
     Ok(())
   }
+  
+  /// Get current connection info if available
+  fn get_current_connection_info(&self) -> Option<ConnectionInfo> {
+    self.connection_info.clone()
+  }
+  
+  /// Write LSP configuration with current database connection
+  async fn write_lsp_config(&self, conn_info: &ConnectionInfo) -> Result<()> {
+    use serde_json::json;
+    
+    let config = json!({
+      "connections": [{
+        "name": "query-crafter",
+        "adapter": &conn_info.adapter,
+        "host": &conn_info.host,
+        "port": conn_info.port,
+        "user": &conn_info.username,
+        "password": &conn_info.password,
+        "database": &conn_info.database,
+        "projectPaths": [std::env::current_dir()?.to_string_lossy()]
+      }]
+    });
+    
+    // Write to .sqllsrc.json in current directory
+    let config_path = std::env::current_dir()?.join(".sqllsrc.json");
+    
+    // Remove old config if exists to ensure fresh read
+    if config_path.exists() {
+      std::fs::remove_file(&config_path)?;
+    }
+    
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+    eprintln!("Wrote LSP config to: {:?}", config_path);
+    eprintln!("LSP config content: {}", serde_json::to_string_pretty(&config)?);
+    
+    Ok(())
+  }
 }
 
 pub async fn dispatch(tx: tokio::sync::mpsc::UnboundedSender<Action>, action: Action) -> Result<()> {
@@ -410,5 +551,16 @@ async fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Querye
 
 async fn query(q: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Queryer>) -> Result<()> {
   db.query(q, tx).await?;
+  Ok(())
+}
+
+async fn load_table_columns(
+  table_name: &str,
+  schema: &str,
+  tx: tokio::sync::mpsc::UnboundedSender<Action>,
+  db: Arc<dyn Queryer>,
+) -> Result<()> {
+  let columns = db.load_table_columns(table_name, schema).await?;
+  dispatch(tx, Action::TableColumnsLoaded(table_name.to_string(), columns)).await?;
   Ok(())
 }

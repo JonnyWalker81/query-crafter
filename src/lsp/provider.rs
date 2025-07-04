@@ -17,8 +17,11 @@ pub struct LspCompletionProvider {
 
 impl LspCompletionProvider {
     pub fn new(client: Arc<Mutex<LspClient>>) -> Result<Self> {
-        // Create a virtual document URI for the SQL editor
-        let document_uri = Url::parse("file:///tmp/query-crafter-editor.sql")?;
+        // Create a virtual document URI for the SQL editor in the project directory
+        let cwd = std::env::current_dir()?;
+        let sql_file = cwd.join("query-editor.sql");
+        let document_uri = Url::from_file_path(sql_file)
+            .map_err(|_| color_eyre::eyre::anyhow!("Failed to create file URL"))?;
         
         Ok(Self {
             client,
@@ -47,9 +50,11 @@ impl LspCompletionProvider {
         cursor_line: usize,
         cursor_col: usize,
     ) -> Result<Vec<SuggestionItem>> {
+        eprintln!("LSP Provider: Getting completions at {}:{}", cursor_line, cursor_col);
         let client = self.client.lock().await;
         
         if !client.is_running() {
+            eprintln!("LSP Provider: Client is not running");
             return Ok(vec![]);
         }
         
@@ -59,6 +64,7 @@ impl LspCompletionProvider {
             character: cursor_col as u32,
         };
         
+        eprintln!("LSP Provider: Requesting completions from LSP client for URI: {}", self.document_uri);
         // Get completions from LSP
         let lsp_items = client.get_completions(self.document_uri.clone(), position).await?;
         

@@ -3,3 +3,5 @@
 /.direnv/
 /butler.db
 /test.db
+/node_modules/
+/package-lock.json

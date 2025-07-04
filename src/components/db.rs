@@ -114,6 +114,30 @@ impl EditorBackend {
       Self::TuiTextarea(vim) => vim.mode(),
     }
   }
+  
+  pub fn format_query(&mut self, selection_only: bool) -> Result<(), String> {
+    match self {
+      Self::TuiTextarea(vim) => vim.format_query(selection_only),
+    }
+  }
+  
+  pub fn format_all(&mut self) -> Result<(), String> {
+    match self {
+      Self::TuiTextarea(vim) => vim.format_all(),
+    }
+  }
+  
+  pub fn toggle_auto_format(&mut self) {
+    match self {
+      Self::TuiTextarea(vim) => vim.toggle_auto_format(),
+    }
+  }
+  
+  pub fn is_auto_format_enabled(&self) -> bool {
+    match self {
+      Self::TuiTextarea(vim) => vim.is_auto_format_enabled(),
+    }
+  }
 
   pub fn set_mode(&mut self, mode: Mode) {
     match self {
@@ -213,6 +237,17 @@ pub struct Db {
   results_matcher: nucleo::Matcher,
   // Help overlay
   show_help: bool,
+  // Query loading state
+  is_query_running: bool,
+  query_start_time: Option<std::time::Instant>,
+  // Table info display
+  show_table_columns: bool,
+  show_table_schema: bool,
+  selected_table_columns: Vec<DbColumn>,
+  selected_table_schema: String,
+  table_info_scroll: u16, // For scrolling in the popup
+  // CSV export status
+  export_status: Option<(String, std::time::Instant)>, // (message, timestamp)
 }
 
 /// Creates a header cell with special styling and centering
@@ -300,6 +335,14 @@ impl Default for Db {
       filtered_results_index: 0,
       results_matcher: nucleo::Matcher::new(nucleo::Config::DEFAULT),
       show_help: false,
+      is_query_running: false,
+      query_start_time: None,
+      show_table_columns: false,
+      show_table_schema: false,
+      selected_table_columns: Vec::new(),
+      selected_table_schema: String::new(),
+      table_info_scroll: 0,
+      export_status: None,
     }
   }
 }
@@ -329,7 +372,80 @@ impl Db {
 
     // Initialize autocomplete functionality
     instance.autocomplete_state = AutocompleteState::new();
-    instance.autocomplete_engine = AutocompleteEngine::new_builtin();
+    
+    // Check config for autocomplete backend preference
+    if let Some(ref config) = config {
+      let backend = &config.autocomplete.backend;
+      eprintln!("Initializing autocomplete with backend: {}", backend);
+      
+      match backend.as_str() {
+        "lsp" => {
+          eprintln!("Initializing LSP backend...");
+          // Create LSP client
+          let lsp_config = config.lsp.clone();
+          let lsp_client = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::lsp::LspClient::new(lsp_config)
+          ));
+          
+          // Try to create LSP engine
+          match AutocompleteEngine::new_lsp(lsp_client.clone()) {
+            Ok(engine) => {
+              instance.autocomplete_engine = engine;
+              eprintln!("LSP autocomplete engine created successfully");
+              
+              // Start LSP server in background
+              let client_clone = lsp_client.clone();
+              tokio::spawn(async move {
+                let mut client = client_clone.lock().await;
+                if let Err(e) = client.start().await {
+                  eprintln!("Failed to start LSP server: {}", e);
+                }
+              });
+            },
+            Err(e) => {
+              eprintln!("Failed to create LSP engine: {} - using builtin", e);
+              instance.autocomplete_engine = AutocompleteEngine::new_builtin();
+            }
+          }
+        },
+        "hybrid" => {
+          eprintln!("Initializing hybrid backend...");
+          // Create LSP client
+          let lsp_config = config.lsp.clone();
+          let lsp_client = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::lsp::LspClient::new(lsp_config)
+          ));
+          
+          // Try to create hybrid engine
+          match AutocompleteEngine::new_hybrid(lsp_client.clone()) {
+            Ok(engine) => {
+              instance.autocomplete_engine = engine;
+              eprintln!("Hybrid autocomplete engine created successfully");
+              
+              // Start LSP server in background
+              let client_clone = lsp_client.clone();
+              tokio::spawn(async move {
+                let mut client = client_clone.lock().await;
+                if let Err(e) = client.start().await {
+                  eprintln!("Failed to start LSP server: {}", e);
+                }
+              });
+            },
+            Err(e) => {
+              eprintln!("Failed to create hybrid engine: {} - using builtin", e);
+              instance.autocomplete_engine = AutocompleteEngine::new_builtin();
+            }
+          }
+        },
+        _ => {
+          instance.autocomplete_engine = AutocompleteEngine::new_builtin();
+        }
+      }
+    } else {
+      instance.autocomplete_engine = AutocompleteEngine::new_builtin();
+    }
+    
+    eprintln!("Autocomplete engine initialized: {}", instance.autocomplete_engine.backend_name());
     instance.table_columns_cache = HashMap::new();
 
     // Load existing history
@@ -465,6 +581,7 @@ impl Db {
   }
 
   fn render_table_list(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    // Keep the same layout regardless of info display (info will be a popup)
     let table_chunks = Layout::default()
       .direction(Direction::Horizontal)
       .constraints([Constraint::Percentage(20), Constraint::Percentage(80)].as_ref())
@@ -650,10 +767,12 @@ impl Db {
   }
 
   fn render_query_results_table(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    // Use the last chunk for results (either index 1 or 2 depending on layout)
+    let results_area = chunks[chunks.len() - 1];
     let table_chunks = Layout::default()
       .direction(Direction::Vertical)
       .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-      .split(chunks[2]);
+      .split(results_area);
 
     let skip_count = self.horizonal_scroll_offset * VISIBLE_COLUMNS;
 
@@ -697,17 +816,32 @@ impl Db {
         .collect::<Vec<_>>()
     };
 
-    // Update status text to show filtered vs total
-    let status_text = if !self.results_search_query.is_empty() {
+    // Build status text with export status if present
+    let mut status_parts = vec![];
+    
+    // Add row count
+    if !self.results_search_query.is_empty() {
       let filtered_count = self.filtered_results.len();
       let total_count = self.query_results.len();
-      Paragraph::new(Text::styled(
-        format!("Rows: {filtered_count}/{total_count} (search: '{}')", self.results_search_query),
-        theme::info(),
-      ))
+      status_parts.push(format!("Rows: {filtered_count}/{total_count} (search: '{}')", self.results_search_query));
     } else {
-      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), theme::info()))
-    };
+      status_parts.push(format!("Rows: {}", self.query_results.len()));
+    }
+    
+    // Add export status if recent (show for 5 seconds)
+    if let Some((message, timestamp)) = &self.export_status {
+      if timestamp.elapsed().as_secs() < 5 {
+        status_parts.push(format!(" | {}", message));
+      } else {
+        // Clear old status
+        self.export_status = None;
+      }
+    }
+    
+    let status_text = Paragraph::new(Text::styled(
+      status_parts.join(""),
+      theme::info(),
+    ));
     f.render_widget(status_text, table_chunks[1]);
 
     let is_results_focused = self.selected_component == ComponentKind::Results;
@@ -720,8 +854,19 @@ impl Db {
       table_state.select(Some(self.selected_row_index));
     }
 
-    // Update title based on search mode
-    let title = if self.is_searching_results {
+    // Update title based on search mode and loading state
+    let title = if self.is_query_running {
+      let elapsed = self.query_start_time
+        .map(|start| start.elapsed().as_secs_f32())
+        .unwrap_or(0.0);
+      let spinner = match (elapsed * 4.0) as usize % 4 {
+        0 => "⠋",
+        1 => "⠙",
+        2 => "⠹",
+        _ => "⠸",
+      };
+      format!("[3] Results - {} Loading... ({:.1}s)", spinner, elapsed)
+    } else if self.is_searching_results {
       format!("[3] Results - Search: {}_", self.results_search_query)
     } else if !self.results_search_query.is_empty() {
       format!("[3] Results - Filter: {}", self.results_search_query)
@@ -778,11 +923,13 @@ impl Db {
   }
 
   fn render_split_view(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    // Use the last chunk for results (either index 1 or 2 depending on layout)
+    let results_area = chunks[chunks.len() - 1];
     // Split the results area into two panes: table (60%) and details (40%)
     let split_chunks = Layout::default()
       .direction(Direction::Horizontal)
       .constraints([Constraint::Percentage(60), Constraint::Percentage(40)].as_ref())
-      .split(chunks[2]);
+      .split(results_area);
 
     // Render the table on the left
     self.render_query_results_table_in_area(f, split_chunks[0])?;
@@ -872,17 +1019,32 @@ impl Db {
         .collect::<Vec<_>>()
     };
 
-    // Update status text to show filtered vs total
-    let status_text = if !self.results_search_query.is_empty() {
+    // Build status text with export status if present
+    let mut status_parts = vec![];
+    
+    // Add row count
+    if !self.results_search_query.is_empty() {
       let filtered_count = self.filtered_results.len();
       let total_count = self.query_results.len();
-      Paragraph::new(Text::styled(
-        format!("Rows: {filtered_count}/{total_count} (search: '{}')", self.results_search_query),
-        theme::info(),
-      ))
+      status_parts.push(format!("Rows: {filtered_count}/{total_count} (search: '{}')", self.results_search_query));
     } else {
-      Paragraph::new(Text::styled(format!("Rows: {}", self.query_results.len()), theme::info()))
-    };
+      status_parts.push(format!("Rows: {}", self.query_results.len()));
+    }
+    
+    // Add export status if recent (show for 5 seconds)
+    if let Some((message, timestamp)) = &self.export_status {
+      if timestamp.elapsed().as_secs() < 5 {
+        status_parts.push(format!(" | {}", message));
+      } else {
+        // Clear old status
+        self.export_status = None;
+      }
+    }
+    
+    let status_text = Paragraph::new(Text::styled(
+      status_parts.join(""),
+      theme::info(),
+    ));
     f.render_widget(status_text, table_chunks[1]);
 
     let is_results_focused = self.selected_component == ComponentKind::Results;
@@ -895,8 +1057,19 @@ impl Db {
       table_state.select(Some(self.selected_row_index));
     }
 
-    // Update title based on search mode
-    let title = if self.is_searching_results {
+    // Update title based on search mode and loading state
+    let title = if self.is_query_running {
+      let elapsed = self.query_start_time
+        .map(|start| start.elapsed().as_secs_f32())
+        .unwrap_or(0.0);
+      let spinner = match (elapsed * 4.0) as usize % 4 {
+        0 => "⠋",
+        1 => "⠙",
+        2 => "⠹",
+        _ => "⠸",
+      };
+      format!("[3] Results - {} Loading... ({:.1}s)", spinner, elapsed)
+    } else if self.is_searching_results {
       format!("[3] Results - Search: {}_", self.results_search_query)
     } else if !self.results_search_query.is_empty() {
       format!("[3] Results - Filter: {}", self.results_search_query)
@@ -982,10 +1155,12 @@ impl Db {
   }
 
   fn render_cell_selection_view(&mut self, f: &mut Frame<'_>, chunks: Rc<[Rect]>) -> Result<Rc<[Rect]>> {
+    // Use the last chunk for results (either index 1 or 2 depending on layout)
+    let results_area = chunks[chunks.len() - 1];
     let table_chunks = Layout::default()
       .direction(Direction::Vertical)
       .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-      .split(chunks[2]);
+      .split(results_area);
 
     // Auto-scroll to keep selected cell in view
     let cell_page = self.selected_cell_index / VISIBLE_COLUMNS;
@@ -1196,10 +1371,16 @@ impl Db {
         Span::raw(" - Navigate tables/rows/columns"),
       ]),
       Line::from(vec![Span::styled("j/k/h/l", theme::info()), Span::raw(" - Vim-style navigation")]),
+      Line::from(vec![Span::styled("gg", theme::info()), Span::raw(" - Jump to first item")]),
+      Line::from(vec![Span::styled("G (Shift+G)", theme::info()), Span::raw(" - Jump to last item")]),
+      Line::from(vec![Span::styled("Ctrl+B", theme::info()), Span::raw(" - Page up (10 items)")]),
+      Line::from(vec![Span::styled("Ctrl+F", theme::info()), Span::raw(" - Page down (10 items)")]),
       Line::from(""),
       Line::from(vec![Span::styled("Tables (Panel 1)", theme::header())]),
       Line::from(vec![Span::styled("/", theme::info()), Span::raw(" - Search tables")]),
       Line::from(vec![Span::styled("Enter", theme::info()), Span::raw(" - Load selected table")]),
+      Line::from(vec![Span::styled("c", theme::info()), Span::raw(" - View/hide table columns")]),
+      Line::from(vec![Span::styled("s", theme::info()), Span::raw(" - View/hide table schema")]),
       Line::from(""),
       Line::from(vec![Span::styled("Query Editor (Panel 2)", theme::header())]),
       Line::from(vec![Span::styled("Ctrl+Enter", theme::info()), Span::raw(" - Execute query")]),
@@ -1209,6 +1390,12 @@ impl Db {
         Span::styled("Tab", theme::info()),
         Span::raw(" - Switch between Query/History tabs"),
       ]),
+      Line::from(""),
+      Line::from(vec![Span::styled("Query Formatting", theme::header())]),
+      Line::from(vec![Span::styled("==", theme::info()), Span::raw(" - Format entire query")]),
+      Line::from(vec![Span::styled("= (visual mode)", theme::info()), Span::raw(" - Format selection")]),
+      Line::from(vec![Span::styled("=G", theme::info()), Span::raw(" - Format to end of file")]),
+      Line::from(vec![Span::styled("=a", theme::info()), Span::raw(" - Toggle auto-format on execute")]),
       Line::from(""),
       Line::from(vec![Span::styled("History Tab", theme::header())]),
       Line::from(vec![Span::styled("Enter", theme::info()), Span::raw(" - Execute selected query")]),
@@ -1222,6 +1409,7 @@ impl Db {
       Line::from(vec![Span::styled("p", theme::info()), Span::raw(" - Preview row in popup")]),
       Line::from(vec![Span::styled("v", theme::info()), Span::raw(" - Enter cell selection mode")]),
       Line::from(vec![Span::styled("r", theme::info()), Span::raw(" - Re-run last query")]),
+      Line::from(vec![Span::styled("Ctrl+S", theme::info()), Span::raw(" - Export results to CSV")]),
       Line::from(""),
       Line::from(vec![Span::styled("Copy Commands", theme::header())]),
       Line::from(vec![Span::styled("y", theme::info()), Span::raw(" - Copy current cell/row")]),
@@ -1291,31 +1479,82 @@ impl Component for Db {
     }
 
     // Update autocomplete backend if changed
-    match config.autocomplete.backend.as_str() {
+    let requested_backend = &config.autocomplete.backend;
+    eprintln!("Autocomplete backend requested: {}", requested_backend);
+    
+    match requested_backend.as_str() {
       "builtin" => {
         // Only switch if not already builtin
         if !matches!(self.autocomplete_engine.backend_name(), "builtin") {
           self.autocomplete_engine = AutocompleteEngine::new_builtin();
+          eprintln!("Switched to builtin autocomplete engine");
         }
       },
       "lsp" => {
-        // TODO: Initialize LSP client and switch to LSP backend
-        // For now, fallback to builtin
-        if !matches!(self.autocomplete_engine.backend_name(), "builtin") {
-          self.autocomplete_engine = AutocompleteEngine::new_builtin();
+        // Only switch if not already lsp
+        if !matches!(self.autocomplete_engine.backend_name(), "lsp") {
+          eprintln!("Switching to LSP backend...");
+          let lsp_config = config.lsp.clone();
+          let lsp_client = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::lsp::LspClient::new(lsp_config)
+          ));
+          
+          match AutocompleteEngine::new_lsp(lsp_client.clone()) {
+            Ok(engine) => {
+              self.autocomplete_engine = engine;
+              eprintln!("Switched to LSP autocomplete engine");
+              
+              // Start LSP server in background
+              let client_clone = lsp_client.clone();
+              tokio::spawn(async move {
+                let mut client = client_clone.lock().await;
+                if let Err(e) = client.start().await {
+                  eprintln!("Failed to start LSP server: {}", e);
+                }
+              });
+            },
+            Err(e) => {
+              eprintln!("Failed to create LSP engine: {} - keeping current", e);
+            }
+          }
         }
       },
       "hybrid" => {
-        // TODO: Initialize hybrid backend with LSP client
-        // For now, fallback to builtin
-        if !matches!(self.autocomplete_engine.backend_name(), "builtin") {
-          self.autocomplete_engine = AutocompleteEngine::new_builtin();
+        // Only switch if not already hybrid
+        if !matches!(self.autocomplete_engine.backend_name(), "hybrid") {
+          eprintln!("Switching to hybrid backend...");
+          let lsp_config = config.lsp.clone();
+          let lsp_client = std::sync::Arc::new(tokio::sync::Mutex::new(
+            crate::lsp::LspClient::new(lsp_config)
+          ));
+          
+          match AutocompleteEngine::new_hybrid(lsp_client.clone()) {
+            Ok(engine) => {
+              self.autocomplete_engine = engine;
+              eprintln!("Switched to hybrid autocomplete engine");
+              
+              // Start LSP server in background
+              let client_clone = lsp_client.clone();
+              tokio::spawn(async move {
+                let mut client = client_clone.lock().await;
+                if let Err(e) = client.start().await {
+                  eprintln!("Failed to start LSP server: {}", e);
+                }
+              });
+            },
+            Err(e) => {
+              eprintln!("Failed to create hybrid engine: {} - keeping current", e);
+            }
+          }
         }
       },
       _ => {
         // Unknown backend, keep current
+        eprintln!("Unknown autocomplete backend '{}' - keeping current", requested_backend);
       }
     }
+    
+    eprintln!("Current autocomplete engine: {}", self.autocomplete_engine.backend_name());
 
     self.config = config;
     Ok(())
@@ -1341,7 +1580,7 @@ impl Component for Db {
       && self.selected_tab == 0
       && self.editor_backend.mode() == Mode::Insert;
 
-    // Global key handling for error dismissal and help (highest priority)
+    // Global key handling for error dismissal, help, and popups (highest priority)
     if let KeyCode::Esc = key.code {
       if self.error_message.is_some() {
         self.error_message = None;
@@ -1351,8 +1590,71 @@ impl Component for Db {
         self.show_help = false;
         return Ok(None);
       }
+      if self.show_table_columns || self.show_table_schema {
+        self.show_table_columns = false;
+        self.show_table_schema = false;
+        self.table_info_scroll = 0;
+        return Ok(None);
+      }
     }
 
+    // Handle keys when table info popup is open
+    if self.show_table_columns || self.show_table_schema {
+      match key.code {
+        KeyCode::Down | KeyCode::Char('j') => {
+          if self.show_table_schema {
+            self.table_info_scroll = self.table_info_scroll.saturating_add(1);
+          }
+          return Ok(None);
+        },
+        KeyCode::Up | KeyCode::Char('k') => {
+          if self.show_table_schema {
+            self.table_info_scroll = self.table_info_scroll.saturating_sub(1);
+          }
+          return Ok(None);
+        },
+        KeyCode::PageDown => {
+          if self.show_table_schema {
+            self.table_info_scroll = self.table_info_scroll.saturating_add(10);
+          }
+          return Ok(None);
+        },
+        KeyCode::PageUp => {
+          if self.show_table_schema {
+            self.table_info_scroll = self.table_info_scroll.saturating_sub(10);
+          }
+          return Ok(None);
+        },
+        KeyCode::Char('c') => {
+          // Allow toggling between column and schema view
+          self.show_table_columns = !self.show_table_columns;
+          self.show_table_schema = false;
+          if self.show_table_columns && self.selected_table_columns.is_empty() {
+            if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+              return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+            }
+          }
+          return Ok(None);
+        },
+        KeyCode::Char('s') => {
+          // Allow toggling between schema and column view
+          self.show_table_schema = !self.show_table_schema;
+          self.show_table_columns = false;
+          self.table_info_scroll = 0;
+          if self.show_table_schema {
+            if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+              self.selected_table_schema = self.generate_table_schema(selected_table);
+            }
+          }
+          return Ok(None);
+        },
+        _ => {
+          // Block all other keys when popup is open
+          return Ok(None);
+        },
+      }
+    }
+    
     // Show help overlay
     if let KeyCode::Char('?') = key.code {
       if !is_editing && !self.is_searching_tables && !self.is_searching_results {
@@ -1412,6 +1714,19 @@ impl Component for Db {
             }
           },
           _ => {},
+        }
+        
+        // Handle non-search keys for Home component
+        if !self.is_searching_tables {
+          match key.code {
+            KeyCode::Char('c') => {
+              return Ok(Some(Action::ViewTableColumns));
+            },
+            KeyCode::Char('s') => {
+              return Ok(Some(Action::ViewTableSchema));
+            },
+            _ => {},
+          }
         }
       },
       ComponentKind::Query => {
@@ -1561,6 +1876,19 @@ impl Component for Db {
 
           // Delegate key handling to the editor backend
           if let Ok(Some(action)) = self.editor_backend.handle_key_event(key) {
+            // If in insert mode and using LSP, send document update
+            if self.editor_backend.mode() == Mode::Insert {
+              match self.autocomplete_engine.backend_name() {
+                "lsp" | "hybrid" => {
+                  // Send document update action for LSP synchronization
+                  let text = self.editor_backend.get_text();
+                  self.command_tx.as_ref().map(|tx| {
+                    let _ = tx.send(Action::UpdateAutocompleteDocument(text));
+                  });
+                }
+                _ => {}
+              }
+            }
             return Ok(Some(action));
           }
 
@@ -1755,6 +2083,24 @@ impl Component for Db {
           } else {
             self.selected_table_index = 0; // Wrap to top
           }
+          
+          // Update popup content if it's visible
+          if self.show_table_columns || self.show_table_schema {
+            if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+              // Check if we have cached columns for this table
+              if let Some(columns) = self.table_columns_cache.get(&selected_table.name) {
+                if self.show_table_columns {
+                  self.selected_table_columns = columns.clone();
+                }
+                if self.show_table_schema {
+                  self.selected_table_schema = self.generate_table_schema(selected_table);
+                }
+              } else {
+                // Need to load columns for this table
+                return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+              }
+            }
+          }
         }
       },
       Action::TableMoveUp => {
@@ -1763,6 +2109,24 @@ impl Component for Db {
             self.selected_table_index -= 1;
           } else {
             self.selected_table_index = self.tables.len() - 1; // Wrap to bottom
+          }
+          
+          // Update popup content if it's visible
+          if self.show_table_columns || self.show_table_schema {
+            if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+              // Check if we have cached columns for this table
+              if let Some(columns) = self.table_columns_cache.get(&selected_table.name) {
+                if self.show_table_columns {
+                  self.selected_table_columns = columns.clone();
+                }
+                if self.show_table_schema {
+                  self.selected_table_schema = self.generate_table_schema(selected_table);
+                }
+              } else {
+                // Need to load columns for this table
+                return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+              }
+            }
           }
         }
       },
@@ -1906,6 +2270,12 @@ impl Component for Db {
         return Ok(Some(Action::SelectComponent(ComponentKind::Home)));
       },
       Action::ExecuteQuery => {
+        // Auto-format before execution if enabled
+        if self.editor_backend.is_auto_format_enabled() {
+          // Try to format, but continue even if formatting fails
+          let _ = self.editor_backend.format_all();
+        }
+        
         // Execute query text from editor backend
         let query_text = if let Some(selected_text) = self.editor_backend.get_selected_text() {
           selected_text.trim().to_string()
@@ -1922,11 +2292,22 @@ impl Component for Db {
           return Ok(Some(Action::HandleQuery(cleaned_query.to_string())));
         }
       },
+      Action::QueryStarted => {
+        self.is_query_running = true;
+        self.query_start_time = Some(std::time::Instant::now());
+        self.error_message = None;
+      },
+      Action::QueryCompleted => {
+        self.is_query_running = false;
+        self.query_start_time = None;
+      },
       Action::RowDetails => {
         self.show_row_details = !self.show_row_details;
       },
       Action::Error(e) => {
         self.error_message = Some(e);
+        self.is_query_running = false;
+        self.query_start_time = None;
 
         // Add failed query to history (but don't save failed queries)
         if let Some(_query) = self.last_executed_query.take() {
@@ -1941,12 +2322,325 @@ impl Component for Db {
       },
       Action::TriggerAutocomplete => {
         // Trigger autocomplete with current context
-        self.trigger_autocomplete();
+        return Ok(self.trigger_autocomplete());
       },
       Action::UpdateAutocompleteDocument(_text) => {
         // For now, we'll ignore LSP document updates since they need async handling
         // This would be properly implemented with a channel to communicate back
         // to the main thread when the update is complete
+      },
+      Action::AutocompleteResults(results) => {
+        eprintln!("Received {} autocomplete results", results.len());
+        
+        // Convert results back to SuggestionItems
+        let suggestions: Vec<crate::autocomplete::SuggestionItem> = results
+          .into_iter()
+          .map(|(text, kind)| {
+            let suggestion_kind = match kind.as_str() {
+              "table" => crate::autocomplete::SuggestionKind::Table,
+              "column" => crate::autocomplete::SuggestionKind::Column,
+              _ => crate::autocomplete::SuggestionKind::Keyword,
+            };
+            crate::autocomplete::SuggestionItem {
+              text,
+              kind: suggestion_kind,
+              score: 100, // Default score
+              table_context: None,
+            }
+          })
+          .collect();
+        
+        // Update autocomplete state with LSP results
+        if self.autocomplete_state.is_active {
+          self.autocomplete_state.update_suggestions(suggestions);
+        }
+      },
+      Action::SetTunnelMode(is_tunnel) => {
+        if is_tunnel && !matches!(self.autocomplete_engine.backend_name(), "builtin") {
+          eprintln!("Tunnel mode detected - switching to builtin autocomplete for better compatibility");
+          self.autocomplete_engine = AutocompleteEngine::new_builtin();
+          
+          // Re-populate the engine with current tables
+          self.autocomplete_engine.update_tables(self.tables.clone());
+          
+          // Update cached columns if any
+          for (table_name, columns) in &self.table_columns_cache {
+            self.autocomplete_engine.update_table_columns(table_name.clone(), columns.clone());
+          }
+          
+          eprintln!("Switched to {} autocomplete", self.autocomplete_engine.backend_name());
+        }
+      },
+      Action::TableColumnsLoaded(table_name, columns) => {
+        // Cache columns for autocomplete and future use
+        self.table_columns_cache.insert(table_name.clone(), columns.clone());
+        self.autocomplete_engine.update_table_columns(table_name.clone(), columns.clone());
+        
+        // Store the loaded columns if column view is active
+        if self.show_table_columns {
+          if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+            if selected_table.name == table_name {
+              self.selected_table_columns = columns;
+            }
+          }
+        }
+        
+        // If schema view was requested and this is the selected table, generate schema now
+        if self.show_table_schema {
+          if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+            if selected_table.name == table_name {
+              self.selected_table_schema = self.generate_table_schema(selected_table);
+            }
+          }
+        }
+      },
+      Action::ViewTableColumns => {
+        // Toggle column view for selected table
+        if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+          if self.show_table_columns {
+            // Hide columns
+            self.show_table_columns = false;
+            self.selected_table_columns.clear();
+          } else {
+            // Show columns - we'll need to load them asynchronously
+            self.show_table_columns = true;
+            self.show_table_schema = false; // Hide schema if it was shown
+            self.table_info_scroll = 0; // Reset scroll
+            // Return an action to load columns (will be handled in app.rs)
+            return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+          }
+        }
+      },
+      Action::ViewTableSchema => {
+        // Toggle schema view for selected table
+        if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+          if self.show_table_schema {
+            // Hide schema
+            self.show_table_schema = false;
+            self.selected_table_schema.clear();
+          } else {
+            // Show schema
+            self.show_table_schema = true;
+            self.show_table_columns = false; // Hide columns if they were shown
+            self.table_info_scroll = 0; // Reset scroll
+            
+            // Check if we have columns cached for this table
+            if !self.table_columns_cache.contains_key(&selected_table.name) {
+              // Need to load columns first, then generate schema
+              return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+            }
+            
+            // Generate schema information
+            self.selected_table_schema = self.generate_table_schema(selected_table);
+          }
+        }
+      },
+      Action::ExportResultsToCsv => {
+        if !self.query_results.is_empty() {
+          if let Err(e) = self.export_results_to_csv() {
+            self.error_message = Some(format!("Failed to export CSV: {}", e));
+          }
+        } else {
+          self.error_message = Some("No results to export".to_string());
+        }
+      },
+      Action::FormatQuery => {
+        if self.selected_component == ComponentKind::Query {
+          if let Err(e) = self.editor_backend.format_all() {
+            self.error_message = Some(e);
+          } else {
+            self.error_message = Some("Query formatted".to_string());
+          }
+        }
+      },
+      Action::FormatSelection => {
+        if self.selected_component == ComponentKind::Query {
+          if let Err(e) = self.editor_backend.format_query(true) {
+            self.error_message = Some(e);
+          } else {
+            self.error_message = Some("Selection formatted".to_string());
+          }
+        }
+      },
+      Action::ToggleAutoFormat => {
+        self.editor_backend.toggle_auto_format();
+        let enabled = self.editor_backend.is_auto_format_enabled();
+        self.error_message = Some(format!("Auto-format {}", if enabled { "enabled" } else { "disabled" }));
+      },
+      Action::RowJumpToTop => {
+        if !self.query_results.is_empty() && self.selected_component == ComponentKind::Results {
+          if !self.filtered_results.is_empty() {
+            // Jump to first filtered result
+            self.filtered_results_index = 0;
+            self.selected_row_index = self.filtered_results[0].0;
+          } else {
+            // Jump to first row
+            self.selected_row_index = 0;
+          }
+        }
+      },
+      Action::RowJumpToBottom => {
+        if !self.query_results.is_empty() && self.selected_component == ComponentKind::Results {
+          if !self.filtered_results.is_empty() {
+            // Jump to last filtered result
+            self.filtered_results_index = self.filtered_results.len() - 1;
+            self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+          } else {
+            // Jump to last row
+            self.selected_row_index = self.query_results.len() - 1;
+          }
+        }
+      },
+      Action::TableJumpToTop => {
+        if !self.tables.is_empty() {
+          self.selected_table_index = 0;
+          
+          // Update popup content if it's visible
+          if self.show_table_columns || self.show_table_schema {
+            if let Some(selected_table) = self.tables.first() {
+              // Check if we have cached columns for this table
+              if let Some(columns) = self.table_columns_cache.get(&selected_table.name) {
+                if self.show_table_columns {
+                  self.selected_table_columns = columns.clone();
+                }
+                if self.show_table_schema {
+                  self.selected_table_schema = self.generate_table_schema(selected_table);
+                }
+              } else {
+                // Need to load columns for this table
+                return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+              }
+            }
+          }
+        }
+      },
+      Action::TableJumpToBottom => {
+        if !self.tables.is_empty() {
+          self.selected_table_index = self.tables.len() - 1;
+          
+          // Update popup content if it's visible
+          if self.show_table_columns || self.show_table_schema {
+            if let Some(selected_table) = self.tables.last() {
+              // Check if we have cached columns for this table
+              if let Some(columns) = self.table_columns_cache.get(&selected_table.name) {
+                if self.show_table_columns {
+                  self.selected_table_columns = columns.clone();
+                }
+                if self.show_table_schema {
+                  self.selected_table_schema = self.generate_table_schema(selected_table);
+                }
+              } else {
+                // Need to load columns for this table
+                return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+              }
+            }
+          }
+        }
+      },
+      Action::RowPageUp => {
+        if !self.query_results.is_empty() && self.selected_component == ComponentKind::Results {
+          // Calculate page size (roughly 10 rows per page as a reasonable default)
+          let page_size = 10;
+          
+          if !self.filtered_results.is_empty() {
+            // Page up in filtered results
+            if self.filtered_results_index >= page_size {
+              self.filtered_results_index -= page_size;
+            } else {
+              self.filtered_results_index = 0;
+            }
+            self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+          } else {
+            // Page up in all results
+            if self.selected_row_index >= page_size {
+              self.selected_row_index -= page_size;
+            } else {
+              self.selected_row_index = 0;
+            }
+          }
+        }
+      },
+      Action::RowPageDown => {
+        if !self.query_results.is_empty() && self.selected_component == ComponentKind::Results {
+          // Calculate page size (roughly 10 rows per page as a reasonable default)
+          let page_size = 10;
+          
+          if !self.filtered_results.is_empty() {
+            // Page down in filtered results
+            let max_index = self.filtered_results.len() - 1;
+            if self.filtered_results_index + page_size <= max_index {
+              self.filtered_results_index += page_size;
+            } else {
+              self.filtered_results_index = max_index;
+            }
+            self.selected_row_index = self.filtered_results[self.filtered_results_index].0;
+          } else {
+            // Page down in all results
+            let max_index = self.query_results.len() - 1;
+            if self.selected_row_index + page_size <= max_index {
+              self.selected_row_index += page_size;
+            } else {
+              self.selected_row_index = max_index;
+            }
+          }
+        }
+      },
+      Action::TablePageUp => {
+        if !self.tables.is_empty() {
+          let page_size = 10;
+          if self.selected_table_index >= page_size {
+            self.selected_table_index -= page_size;
+          } else {
+            self.selected_table_index = 0;
+          }
+          
+          // Update popup content if it's visible
+          if self.show_table_columns || self.show_table_schema {
+            if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+              // Check if we have cached columns for this table
+              if let Some(columns) = self.table_columns_cache.get(&selected_table.name) {
+                if self.show_table_columns {
+                  self.selected_table_columns = columns.clone();
+                }
+                if self.show_table_schema {
+                  self.selected_table_schema = self.generate_table_schema(selected_table);
+                }
+              } else {
+                // Need to load columns for this table
+                return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+              }
+            }
+          }
+        }
+      },
+      Action::TablePageDown => {
+        if !self.tables.is_empty() {
+          let page_size = 10;
+          let max_index = self.tables.len() - 1;
+          if self.selected_table_index + page_size <= max_index {
+            self.selected_table_index += page_size;
+          } else {
+            self.selected_table_index = max_index;
+          }
+          
+          // Update popup content if it's visible
+          if self.show_table_columns || self.show_table_schema {
+            if let Some(selected_table) = self.tables.get(self.selected_table_index) {
+              // Check if we have cached columns for this table
+              if let Some(columns) = self.table_columns_cache.get(&selected_table.name) {
+                if self.show_table_columns {
+                  self.selected_table_columns = columns.clone();
+                }
+                if self.show_table_schema {
+                  self.selected_table_schema = self.generate_table_schema(selected_table);
+                }
+              } else {
+                // Need to load columns for this table
+                return Ok(Some(Action::LoadTable(selected_table.name.clone())));
+              }
+            }
+          }
+        }
       },
       _ => {},
     }
@@ -1981,6 +2675,9 @@ impl Component for Db {
     self.render_error(f)?;
 
     self.render_help(f)?;
+    
+    // Render table info popup last so it appears on top
+    self.render_table_info_popup(f)?;
 
     Ok(())
   }
@@ -1989,9 +2686,10 @@ impl Component for Db {
 // Additional impl block for autocomplete functionality
 impl Db {
   /// Manually triggers autocomplete at the current cursor position
-  fn trigger_autocomplete(&mut self) {
+  fn trigger_autocomplete(&mut self) -> Option<Action> {
     // Get text up to cursor position for context analysis
     let text_up_to_cursor = self.editor_backend.get_text_up_to_cursor();
+    let full_text = self.editor_backend.get_text();
     let cursor_pos = text_up_to_cursor.len();
 
     // Use the SQL parser to analyze context
@@ -1999,24 +2697,41 @@ impl Db {
 
     // Always show suggestions when manually triggered, even for empty current word
     self.autocomplete_state.activate(cursor_pos, current_word.clone());
-    // For now, we'll use the synchronous method until we implement proper async handling
-    // Get cursor position for LSP (will be used when LSP is implemented)
-    let (_cursor_line, _cursor_col) = self.editor_backend.get_cursor_position();
     
-    // For now, we only support synchronous autocomplete
-    // The builtin provider works synchronously, but LSP requires async
-    // TODO: Properly handle async autocomplete with channels
-    let suggestions = match self.autocomplete_engine.backend_mut() {
+    // Get cursor position for LSP
+    let (cursor_line, cursor_col) = self.editor_backend.get_cursor_position();
+    
+    match self.autocomplete_engine.backend_mut() {
       crate::autocomplete_engine::AutocompleteBackend::Builtin(provider) => {
         // Builtin provider can work synchronously
-        provider.get_suggestions(context, &current_word)
+        let suggestions = provider.get_suggestions(context, &current_word);
+        self.autocomplete_state.update_suggestions(suggestions);
+        None
       }
-      _ => {
-        // LSP and hybrid require async, not supported in synchronous context yet
-        vec![]
+      crate::autocomplete_engine::AutocompleteBackend::Lsp(_) => {
+        // LSP requires async, send action to handle in main loop
+        eprintln!("Requesting LSP autocomplete...");
+        Some(Action::RequestAutocomplete {
+          text: full_text,
+          cursor_line,
+          cursor_col,
+          context: format!("{:?}", context), // Simple serialization
+        })
       }
-    };
-    self.autocomplete_state.update_suggestions(suggestions);
+      crate::autocomplete_engine::AutocompleteBackend::Hybrid { builtin, .. } => {
+        // In hybrid mode, try builtin first, then request LSP
+        let suggestions = builtin.get_suggestions(context.clone(), &current_word);
+        self.autocomplete_state.update_suggestions(suggestions);
+        
+        // Also request LSP suggestions
+        Some(Action::RequestAutocomplete {
+          text: full_text,
+          cursor_line,
+          cursor_col,
+          context: format!("{:?}", context),
+        })
+      }
+    }
   }
 
   /// Applies the selected autocomplete suggestion to the editor
@@ -2058,6 +2773,186 @@ impl Db {
 
     f.render_widget(autocomplete_popup, popup_area);
 
+    Ok(())
+  }
+  
+
+  /// Render table information popup (columns or schema)
+  fn render_table_info_popup(&mut self, f: &mut Frame<'_>) -> Result<()> {
+    if !self.show_table_columns && !self.show_table_schema {
+      return Ok(());
+    }
+
+    // Create a centered popup area (80% width, 70% height)
+    let area = self.centered_rect(80, 70, f.area());
+    
+    // Clear the area behind the popup
+    f.render_widget(Clear, area);
+    
+    let title = if self.show_table_columns {
+      format!("Table Columns - {} (ESC to close)", 
+        self.tables.get(self.selected_table_index).map(|t| &t.name).unwrap_or(&"Unknown".to_string()))
+    } else if self.show_table_schema {
+      format!("Table Schema - {} (ESC to close)", 
+        self.tables.get(self.selected_table_index).map(|t| &t.name).unwrap_or(&"Unknown".to_string()))
+    } else {
+      "Table Info".to_string()
+    };
+    
+    let block = Block::default()
+      .borders(Borders::ALL)
+      .border_style(theme::border_focused())
+      .title(title)
+      .title_style(theme::title())
+      .border_type(BorderType::Rounded);
+    
+    if self.show_table_columns && !self.selected_table_columns.is_empty() {
+      // Create a table widget for columns
+      let header_cells = ["Column Name", "Data Type", "Nullable"]
+        .iter()
+        .map(|h| Cell::from(*h).style(theme::header()));
+      let header = Row::new(header_cells)
+        .style(theme::bg_primary())
+        .height(1)
+        .bottom_margin(1);
+      
+      let rows = self.selected_table_columns.iter().map(|col| {
+        let nullable = if col.is_nullable { "YES" } else { "NO" };
+        let cells = [
+          Cell::from(col.name.clone()),
+          Cell::from(col.data_type.clone()),
+          Cell::from(nullable),
+        ];
+        Row::new(cells).height(1)
+      });
+      
+      let table = Table::new(rows, [Constraint::Percentage(40), Constraint::Percentage(40), Constraint::Percentage(20)])
+        .header(header)
+        .block(block)
+        .style(theme::bg_primary())
+        .row_highlight_style(theme::selection_active())
+        .widths(&[Constraint::Percentage(40), Constraint::Percentage(40), Constraint::Percentage(20)]);
+      
+      f.render_widget(table, area);
+    } else if self.show_table_schema {
+      // Show schema as scrollable text
+      let paragraph = Paragraph::new(self.selected_table_schema.as_str())
+        .block(block)
+        .style(theme::bg_primary())
+        .wrap(Wrap { trim: false })
+        .scroll((self.table_info_scroll, 0));
+      f.render_widget(paragraph, area);
+    } else if self.show_table_columns {
+      // Loading message
+      let loading_msg = Paragraph::new("Loading columns...")
+        .block(block)
+        .style(theme::muted())
+        .alignment(Alignment::Center);
+      f.render_widget(loading_msg, area);
+    }
+    
+    Ok(())
+  }
+  
+  /// Generate schema information for a table
+  fn generate_table_schema(&self, table: &DbTable) -> String {
+    let mut schema_info = format!("═══ TABLE SCHEMA ═══\n\n");
+    schema_info.push_str(&format!("Table: {}.{}\n", table.schema, table.name));
+    schema_info.push_str(&format!("{}\n\n", "─".repeat(50)));
+    
+    // Get columns from cache or table
+    let columns = self.table_columns_cache.get(&table.name)
+      .map(|c| c.as_slice())
+      .unwrap_or(&table.columns);
+    
+    if !columns.is_empty() {
+      // Generate CREATE TABLE statement
+      schema_info.push_str("CREATE TABLE Statement:\n");
+      schema_info.push_str(&format!("{}\n", "─".repeat(50)));
+      schema_info.push_str(&format!("CREATE TABLE {} (\n", table.name));
+      
+      for (i, col) in columns.iter().enumerate() {
+        let nullable = if col.is_nullable { "" } else { " NOT NULL" };
+        let comma = if i < columns.len() - 1 { "," } else { "" };
+        schema_info.push_str(&format!("    {} {}{}{}\n", col.name, col.data_type, nullable, comma));
+      }
+      schema_info.push_str(");\n\n");
+      
+      // Column Details
+      schema_info.push_str("Column Details:\n");
+      schema_info.push_str(&format!("{}\n", "─".repeat(50)));
+      schema_info.push_str(&format!("{:<20} {:<20} {:<10}\n", "Name", "Type", "Nullable"));
+      schema_info.push_str(&format!("{:<20} {:<20} {:<10}\n", "────", "────", "────────"));
+      
+      for col in columns {
+        let nullable = if col.is_nullable { "YES" } else { "NO" };
+        schema_info.push_str(&format!("{:<20} {:<20} {:<10}\n", col.name, col.data_type, nullable));
+      }
+      
+      schema_info.push_str(&format!("\n{}\n", "─".repeat(50)));
+      
+      // Add placeholders for additional info
+      schema_info.push_str("\nIndexes:\n");
+      schema_info.push_str("  (Index information not available in current implementation)\n");
+      
+      schema_info.push_str("\nForeign Keys:\n");
+      schema_info.push_str("  (Foreign key information not available in current implementation)\n");
+      
+      schema_info.push_str("\nConstraints:\n");
+      schema_info.push_str("  (Constraint information not available in current implementation)\n");
+      
+      schema_info.push_str(&format!("\n{}\n", "─".repeat(50)));
+      schema_info.push_str(&format!("Total Columns: {}\n", columns.len()));
+      
+      // Add note about getting full schema
+      schema_info.push_str("\nNote: For complete schema information including indexes,\n");
+      schema_info.push_str("foreign keys, and constraints, execute a schema query\n");
+      schema_info.push_str("in the Query panel (e.g., \\d table_name for PostgreSQL).\n");
+    } else {
+      schema_info.push_str("\nColumn information not loaded.\n");
+      schema_info.push_str("Press 'c' to load column details first.\n");
+    }
+    
+    schema_info
+  }
+  
+  /// Export query results to CSV file
+  fn export_results_to_csv(&mut self) -> Result<()> {
+    use std::io::Write;
+    
+    // Generate filename based on current timestamp
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+    let filename = format!("query_results_{}.csv", timestamp);
+    
+    // Create or open the file
+    let mut file = fs::File::create(&filename)?;
+    
+    // Write headers
+    let headers = self.selected_headers.join(",");
+    writeln!(file, "{}", headers)?;
+    
+    // Write data rows
+    for row in &self.query_results {
+      // Escape fields that contain commas, quotes, or newlines
+      let escaped_row: Vec<String> = row.iter().map(|field| {
+        if field.contains(',') || field.contains('"') || field.contains('\n') {
+          // Escape quotes by doubling them and wrap in quotes
+          format!("\"{}\"", field.replace('"', "\"\""))
+        } else {
+          field.clone()
+        }
+      }).collect();
+      
+      let row_str = escaped_row.join(",");
+      writeln!(file, "{}", row_str)?;
+    }
+    
+    // Store success status with timestamp
+    self.export_status = Some((
+      format!("Exported to: {}", filename),
+      std::time::Instant::now()
+    ));
+    
     Ok(())
   }
 }

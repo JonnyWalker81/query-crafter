@@ -1,0 +1,11 @@
+--- a/initializeLogging.js
++++ b/initializeLogging.js
+@@ -40,7 +40,7 @@
+         },
+         // TODO: Should accept level
+         categories: {
+-            default: { appenders: ['server'], level: debug ? 'debug' : 'debug' },
++            default: { appenders: ['server'], level: debug ? 'debug' : 'error' },
+         },
+     });
+     const logger = log4js_1.default.getLogger();

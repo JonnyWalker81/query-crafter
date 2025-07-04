@@ -3,6 +3,13 @@
 [editor]
 backend = "tui-textarea"
 
+[autocomplete]
+backend = "lsp"  # or "hybrid" for both LSP and builtin
+
+[lsp]
+enabled = true
+server_command = "sql-language-server"
+
 # Database connections
 [[connections]]
 host = "localhost"
