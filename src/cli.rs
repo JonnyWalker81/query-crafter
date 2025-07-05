@@ -120,13 +120,17 @@ impl Cli {
     // Determine which config profile to use
     let profile_index = self.config_profile.unwrap_or(0);
     
-    // Check if there are any connections defined
-    if config_connections.is_empty() {
+    // Get config connection if available
+    let config_conn = if !config_connections.is_empty() {
+      config_connections.get(profile_index)
+        .ok_or_else(|| format!("Config profile {} not found (only {} connections defined)", profile_index, config_connections.len()))?
+    } else if self.config_profile.is_some() {
+      // User specified a profile but no connections exist
       return Err("No database connections defined in config.toml. Please add at least one connection.".to_string());
-    }
-    
-    let config_conn = config_connections.get(profile_index)
-      .ok_or_else(|| format!("Config profile {} not found (only {} connections defined)", profile_index, config_connections.len()))?;
+    } else {
+      // No config connections, but that's OK if we have CLI params
+      &toml::Value::Table(toml::map::Map::new())
+    };
 
     // Get environment variables
     let env_host = std::env::var("PGHOST").ok();

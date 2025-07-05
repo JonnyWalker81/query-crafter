@@ -20,7 +20,7 @@ lazy_static! {
 }
 
 fn project_directory() -> Option<ProjectDirs> {
-  ProjectDirs::from("com", "kdheepak", env!("CARGO_PKG_NAME"))
+  ProjectDirs::from("com", "query-crafter", env!("CARGO_PKG_NAME"))
 }
 
 pub fn initialize_panic_handler() -> Result<()> {
@@ -41,13 +41,10 @@ pub fn initialize_panic_handler() -> Result<()> {
     #[cfg(not(debug_assertions))]
     {
       use human_panic::{handle_dump, print_msg, Metadata};
-      let meta = Metadata::new(
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION")
-      )
-      .authors(env!("CARGO_PKG_AUTHORS").replace(':', ", "))
-      .homepage(env!("CARGO_PKG_HOMEPAGE"))
-      .support("Please report bugs at https://github.com/JonnyWalker81/query-crafter/issues");
+      let meta = Metadata::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
+        .authors(env!("CARGO_PKG_AUTHORS").replace(':', ", "))
+        .homepage(env!("CARGO_PKG_HOMEPAGE"))
+        .support("Please report bugs at https://github.com/JonnyWalker81/query-crafter/issues");
 
       let file_path = handle_dump(&meta, panic_info);
       // prints human-panic message

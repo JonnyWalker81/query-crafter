@@ -172,16 +172,25 @@ impl App {
   async fn connect_direct(cli_args: &crate::cli::Cli) -> Result<Arc<dyn Queryer>> {
     let app_config_contents = load_config_toml()?;
     let app_config = toml::from_str::<toml::Value>(&app_config_contents)?;
+    
+    // Check if CLI has connection parameters
+    let has_cli_params = cli_args.has_pg_connection_params();
+    
+    // Get connections array, but don't fail if it's missing when CLI params are provided
+    let empty_connections = vec![];
     let connections = app_config.get("connections")
       .and_then(|c| c.as_array())
-      .ok_or_else(|| {
-        if let Some(proj_dirs) = directories::ProjectDirs::from("com", "query-crafter", "query-crafter") {
-          let config_path = proj_dirs.config_dir().join("config.toml");
-          anyhow!("No database connections found in config.toml. Please add connections to: {}", config_path.display())
-        } else {
-          anyhow!("No database connections found in config.toml")
-        }
-      })?;
+      .unwrap_or(&empty_connections);
+    
+    // If no connections in config and no CLI params, show error
+    if connections.is_empty() && !has_cli_params {
+      if let Some(proj_dirs) = directories::ProjectDirs::from("com", "query-crafter", "query-crafter") {
+        let config_path = proj_dirs.config_dir().join("config.toml");
+        return Err(anyhow!("No database connections found in config.toml. Please add connections to: {}", config_path.display()));
+      } else {
+        return Err(anyhow!("No database connections found in config.toml"));
+      }
+    }
 
     let connection = cli_args
       .build_pg_connection_string(connections)
