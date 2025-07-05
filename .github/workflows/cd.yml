@@ -4,6 +4,17 @@ on:
   push:
     tags:
       - '[v]?[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., v0.1.0)'
+        required: true
+        type: string
+      draft:
+        description: 'Create as draft release'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   create-release:
@@ -20,18 +31,37 @@ jobs:
       
       - name: Get version
         id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
       
       - name: Generate changelog
         id: changelog
         run: |
-          # Get the previous tag
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # For manual dispatch, use provided version as reference
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            # Try to find the previous tag
+            PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -A1 "^${VERSION}$" | tail -1 2>/dev/null || echo "")
+            if [ -z "$PREVIOUS_TAG" ] || [ "$PREVIOUS_TAG" = "$VERSION" ]; then
+              PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            fi
+          else
+            # Get the previous tag for automatic releases
+            PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          fi
           
           # Generate changelog
           if [ -n "$PREVIOUS_TAG" ]; then
             echo "## What's Changed" > changelog.md
             echo "" >> changelog.md
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "Manual release from commit $(git rev-parse --short HEAD)" >> changelog.md
+              echo "" >> changelog.md
+            fi
             git log --pretty=format:"* %s (%h)" $PREVIOUS_TAG..HEAD >> changelog.md
           else
             echo "## Initial Release" > changelog.md
@@ -54,10 +84,10 @@ jobs:
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
+          tag_name: ${{ steps.get_version.outputs.version }}
           name: Release ${{ steps.get_version.outputs.version }}
           body_path: changelog.md
-          draft: false
+          draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' || false }}
           prerelease: false
           generate_release_notes: false
 
@@ -167,11 +197,19 @@ jobs:
 
           ########## create version file ##########
           
-          echo "${GITHUB_REF/refs\/tags\//}" > VERSION
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "${{ github.event.inputs.version }}" > VERSION
+          else
+            echo "${GITHUB_REF/refs\/tags\//}" > VERSION
+          fi
 
           ########## create tar.gz ##########
 
-          RELEASE_NAME=${{ matrix.binary-name }}-${GITHUB_REF/refs\/tags\//}-${{ matrix.os-name }}-${{ matrix.architecture }}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_NAME=${{ matrix.binary-name }}-${{ github.event.inputs.version }}-${{ matrix.os-name }}-${{ matrix.architecture }}
+          else
+            RELEASE_NAME=${{ matrix.binary-name }}-${GITHUB_REF/refs\/tags\//}-${{ matrix.os-name }}-${{ matrix.architecture }}
+          fi
 
           tar czvf $RELEASE_NAME.tar.gz $BINARY_NAME VERSION
 

@@ -1,0 +1,89 @@
+name: Manual Release Helper
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - 'create-tag'
+          - 'delete-release'
+          - 'list-releases'
+      version:
+        description: 'Version (for create-tag/delete-release)'
+        required: false
+        type: string
+
+jobs:
+  manage-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Tag
+        if: ${{ github.event.inputs.action == 'create-tag' }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            echo "Error: Version is required for create-tag action"
+            exit 1
+          fi
+          
+          # Check if tag already exists
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Error: Tag $VERSION already exists"
+            exit 1
+          fi
+          
+          # Create and push tag
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "$VERSION"
+          
+          echo "✅ Tag $VERSION created successfully"
+          echo "The CD workflow should now trigger automatically to create the release"
+
+      - name: Delete Release
+        if: ${{ github.event.inputs.action == 'delete-release' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            echo "Error: Version is required for delete-release action"
+            exit 1
+          fi
+          
+          # Get release ID
+          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/$VERSION --jq '.id' 2>/dev/null || echo "")
+          
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Error: Release $VERSION not found"
+            exit 1
+          fi
+          
+          # Delete release
+          gh api -X DELETE repos/${{ github.repository }}/releases/$RELEASE_ID
+          echo "✅ Release $VERSION deleted"
+          
+          # Ask about tag deletion
+          echo "Note: The tag $VERSION still exists. Delete it manually with:"
+          echo "  git push --delete origin $VERSION"
+
+      - name: List Releases
+        if: ${{ github.event.inputs.action == 'list-releases' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Existing Releases"
+          gh release list --limit 20
+          
+          echo ""
+          echo "## Existing Tags"
+          git tag --sort=-version:refname | head -20
