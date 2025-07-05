@@ -69,6 +69,11 @@ impl Db {
         let recent_queries = &self.query_history[self.query_history.len().saturating_sub(recent_limit)..];
 
         if !recent_queries.iter().any(|entry| entry.query == query) {
+            // Calculate execution time if we have a start time
+            let execution_time_ms = self.query_start_time.map(|start_time| {
+                start_time.elapsed().as_millis() as u64
+            });
+            
             let entry = QueryHistoryEntry {
                 query,
                 timestamp: SystemTime::now()
@@ -76,7 +81,7 @@ impl Db {
                     .unwrap_or_else(|_| Duration::from_secs(0))
                     .as_secs(),
                 row_count: Some(row_count),
-                execution_time_ms: None,
+                execution_time_ms,
                 error: None,
             };
             self.query_history.push(entry);
