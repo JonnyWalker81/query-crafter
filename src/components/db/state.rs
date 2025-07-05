@@ -251,6 +251,11 @@ impl Db {
         if let Some(selected_table) = self.tables.get(self.selected_table_index) {
           let query = format!("SELECT * FROM {}", selected_table.name);
           self.editor_backend.set_text(&query);
+          // Set query start time when loading table
+          self.last_executed_query = Some(query.clone());
+          self.is_query_running = true;
+          self.query_start_time = Some(Instant::now());
+          self.error_message = None;
           return Ok(Some(Action::HandleQuery(query)));
         } else {
           return Ok(None);

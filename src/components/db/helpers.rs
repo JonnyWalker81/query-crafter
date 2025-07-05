@@ -71,7 +71,14 @@ impl Db {
         if !recent_queries.iter().any(|entry| entry.query == query) {
             // Calculate execution time if we have a start time
             let execution_time_ms = self.query_start_time.map(|start_time| {
-                start_time.elapsed().as_millis() as u64
+                let elapsed = start_time.elapsed();
+                let millis = elapsed.as_millis() as u64;
+                // Show at least 1ms for very fast queries (but not 0)
+                if elapsed.as_micros() > 0 && millis == 0 {
+                    1
+                } else {
+                    millis
+                }
             });
             
             let entry = QueryHistoryEntry {

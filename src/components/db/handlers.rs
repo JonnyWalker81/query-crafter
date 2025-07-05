@@ -435,8 +435,11 @@ impl Db {
                     
                     self.selected_tab = 0; // Switch to Query tab
                     self.selected_component = ComponentKind::Query; // Switch to Query component
-                    // Store the query for history tracking
+                    // Store the query for history tracking and set start time
                     self.last_executed_query = Some(entry.query.clone());
+                    self.is_query_running = true;
+                    self.query_start_time = Some(std::time::Instant::now());
+                    self.error_message = None;
                     // Execute the query
                     return Ok(Some(Action::HandleQuery(entry.query.clone())));
                 }
