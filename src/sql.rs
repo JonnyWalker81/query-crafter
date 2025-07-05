@@ -5,7 +5,7 @@ use sqlx::{
   postgres::{PgColumn, PgPoolOptions, PgRow},
   sqlite::{SqliteColumn, SqliteRow},
   types::Uuid,
-  Column, Row,
+  Column, Row, Either,
 };
 use tokio_stream::StreamExt as OtherStream;
 
@@ -20,6 +20,7 @@ pub trait Queryer: Send + Sync {
   async fn load_tables(&self, tx: tokio::sync::mpsc::UnboundedSender<Action>, search: &str) -> Result<()>;
   async fn load_table_columns(&self, table_name: &str, schema: &str) -> Result<Vec<DbColumn>>;
   async fn query(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()>;
+  async fn query_raw(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()>;
 }
 
 pub struct Sqlite {
@@ -109,6 +110,53 @@ impl Queryer for Sqlite {
     dispatch(tx.clone(), Action::QueryResult(headers, results)).await?;
     dispatch(tx, Action::QueryCompleted).await?;
 
+    Ok(())
+  }
+
+  async fn query_raw(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    // Use raw_sql for multiple statement support
+    let mut stream = sqlx::raw_sql(query).fetch_many(&self.conn);
+    
+    let mut all_headers = vec![];
+    let mut all_results = vec![];
+    let mut statement_count = 0;
+    let mut rows_affected_total = 0u64;
+    
+    while let Some(either_result) = stream.try_next().await? {
+      match either_result {
+        Either::Left(result) => {
+          // This is a query result with no rows (like INSERT, UPDATE, CREATE)
+          statement_count += 1;
+          rows_affected_total += result.rows_affected();
+        },
+        Either::Right(row) => {
+          // This is a row from a SELECT query
+          if all_headers.is_empty() {
+            all_headers = row.columns().iter().map(|c| c.name().to_string()).collect();
+          }
+          
+          let mut row_result = vec![];
+          for c in row.columns() {
+            if let Ok(v) = get_sqlite_value(&row, c) {
+              row_result.push(v);
+            }
+          }
+          
+          all_results.push(row_result);
+        }
+      }
+    }
+    
+    // If we got results from a SELECT, send them
+    if !all_results.is_empty() {
+      dispatch(tx.clone(), Action::QueryResult(all_headers, all_results)).await?;
+    } else if statement_count > 0 {
+      // Otherwise, send a summary of what was executed
+      let summary = format!("Executed {} statement(s). {} row(s) affected.", statement_count, rows_affected_total);
+      dispatch(tx.clone(), Action::QueryResult(vec!["Result".to_string()], vec![vec![summary]])).await?;
+    }
+    
+    dispatch(tx, Action::QueryCompleted).await?;
     Ok(())
   }
 }
@@ -212,6 +260,53 @@ impl Queryer for Postgres {
     dispatch(tx.clone(), Action::QueryResult(headers, results)).await?;
     dispatch(tx, Action::QueryCompleted).await?;
 
+    Ok(())
+  }
+
+  async fn query_raw(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    // Use raw_sql for multiple statement support
+    let mut stream = sqlx::raw_sql(query).fetch_many(&self.pool);
+    
+    let mut all_headers = vec![];
+    let mut all_results = vec![];
+    let mut statement_count = 0;
+    let mut rows_affected_total = 0u64;
+    
+    while let Some(either_result) = stream.try_next().await? {
+      match either_result {
+        Either::Left(result) => {
+          // This is a query result with no rows (like INSERT, UPDATE, CREATE)
+          statement_count += 1;
+          rows_affected_total += result.rows_affected();
+        },
+        Either::Right(row) => {
+          // This is a row from a SELECT query
+          if all_headers.is_empty() {
+            all_headers = row.columns().iter().map(|c| c.name().to_string()).collect();
+          }
+          
+          let mut row_result = vec![];
+          for c in row.columns() {
+            if let Ok(v) = get_pg_value(&row, c) {
+              row_result.push(v);
+            }
+          }
+          
+          all_results.push(row_result);
+        }
+      }
+    }
+    
+    // If we got results from a SELECT, send them
+    if !all_results.is_empty() {
+      dispatch(tx.clone(), Action::QueryResult(all_headers, all_results)).await?;
+    } else if statement_count > 0 {
+      // Otherwise, send a summary of what was executed
+      let summary = format!("Executed {} statement(s). {} row(s) affected.", statement_count, rows_affected_total);
+      dispatch(tx.clone(), Action::QueryResult(vec!["Result".to_string()], vec![vec![summary]])).await?;
+    }
+    
+    dispatch(tx, Action::QueryCompleted).await?;
     Ok(())
   }
 }

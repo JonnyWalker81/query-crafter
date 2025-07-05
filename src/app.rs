@@ -550,7 +550,23 @@ async fn init(tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Querye
 }
 
 async fn query(q: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>, db: Arc<dyn Queryer>) -> Result<()> {
-  db.query(q, tx).await?;
+  // Check if query contains multiple statements
+  // Simple heuristic: look for semicolon followed by non-whitespace
+  let trimmed = q.trim();
+  let has_multiple_statements = if let Some(semi_pos) = trimmed.find(';') {
+    // Check if there's non-whitespace after the semicolon
+    trimmed[semi_pos + 1..].trim().len() > 0
+  } else {
+    false
+  };
+  
+  if has_multiple_statements {
+    // Use raw_sql for multiple statements
+    db.query_raw(q, tx).await?;
+  } else {
+    // Use regular query for single statement
+    db.query(q, tx).await?;
+  }
   Ok(())
 }
 

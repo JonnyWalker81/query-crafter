@@ -1020,19 +1020,23 @@ impl Db {
         let explain_block = Block::default()
             .borders(Borders::ALL)
             .border_style(if is_focused { theme::border_focused() } else { theme::border_normal() })
-            .title("[3] Query Results - EXPLAIN View [x] Toggle View")
+            .title("[3] Query Results - EXPLAIN View [x] Toggle View [c] Copy")
             .title_style(theme::title())
             .border_type(BorderType::Rounded);
 
-        // For PostgreSQL EXPLAIN output, we typically have a single column with the plan
-        // For SQLite EXPLAIN QUERY PLAN, we have multiple columns
+        // Render the EXPLAIN output
         if self.selected_headers.len() == 1 && self.selected_headers[0].to_lowercase().contains("query plan") {
             // PostgreSQL-style EXPLAIN output - render as a formatted text
-            self.render_explain_text_output(f, table_chunks[0], explain_block)
+            self.render_explain_text_output(f, table_chunks[0], explain_block)?;
         } else {
             // SQLite-style or EXPLAIN ANALYZE with multiple columns - render as table
-            self.render_explain_table_output(f, table_chunks[0], explain_block)
+            self.render_explain_table_output(f, table_chunks[0], explain_block)?;
         }
+        
+        // Render status line (including export_status for copy success message)
+        self.render_explain_status_line(f, table_chunks[1])?;
+        
+        Ok(())
     }
 
     fn render_explain_text_output(&mut self, f: &mut Frame<'_>, area: Rect, block: Block) -> Result<()> {
@@ -1152,6 +1156,31 @@ impl Db {
         table_state.select(Some(self.selected_row_index));
 
         f.render_stateful_widget(table, area, &mut table_state);
+        
+        Ok(())
+    }
+    
+    fn render_explain_status_line(&mut self, f: &mut Frame<'_>, area: Rect) -> Result<()> {
+        let mut status_parts = vec![];
+        
+        // Add row count
+        status_parts.push(format!("Rows: {}", self.query_results.len()));
+        
+        // Add export status if recent (show for 5 seconds)
+        if let Some((message, timestamp)) = &self.export_status {
+            if timestamp.elapsed().as_secs() < 5 {
+                status_parts.push(format!(" | {}", message));
+            } else {
+                // Clear old status
+                self.export_status = None;
+            }
+        }
+        
+        let status_text = Paragraph::new(Text::styled(
+            status_parts.join(""),
+            theme::info(),
+        ));
+        f.render_widget(status_text, area);
         
         Ok(())
     }
