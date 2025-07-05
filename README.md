@@ -15,8 +15,90 @@ TUI for interacting with a database
 
 ## Installation
 
+### Quick Install (Recommended)
+
+Install the latest release using our installer script:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/install.sh | sh
+```
+
+The installer will:
+- Detect your operating system and architecture
+- Download the appropriate binary from GitHub releases
+- Install to `~/.local/bin` (or custom location via `INSTALL_DIR`)
+- Verify checksums for security
+
+### Installation Methods
+
+#### 1. Universal Installer Script
+
+```bash
+# Install latest version
+curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/install.sh | sh
+
+# Install specific version
+curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/install.sh | sh -s -- --version v0.1.0
+
+# Install to custom location
+INSTALL_DIR=/opt/bin curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/install.sh | sh
+
+# System-wide installation (requires sudo)
+curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/install.sh | sudo sh
+```
+
+#### 2. GitHub Releases
+
+Download pre-built binaries directly from [GitHub Releases](https://github.com/JonnyWalker81/query-crafter/releases):
+
+- Linux: `query-crafter-{version}-linux-{arch}.tar.gz`
+- macOS: `query-crafter-{version}-macos-{arch}.tar.gz`
+- Windows: `query-crafter-{version}-windows-{arch}.tar.gz`
+
+Where `{arch}` is one of: `x86_64`, `arm64`, `armv7`, `i686`
+
+#### 3. Cargo (Build from source)
+
 ```bash
 cargo install query-crafter
+```
+
+#### 4. NixOS / Nix Package Manager
+
+```bash
+# Using nix flakes (recommended)
+nix run github:JonnyWalker81/query-crafter
+
+# Install to profile
+nix profile install github:JonnyWalker81/query-crafter
+
+# Traditional nix-build
+curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/nix/query-crafter.nix -o query-crafter.nix
+nix-build query-crafter.nix
+./result/bin/query-crafter
+
+# In NixOS configuration.nix
+environment.systemPackages = with pkgs; [
+  (callPackage ./query-crafter.nix { })
+];
+
+# Development shell
+nix develop github:JonnyWalker81/query-crafter
+```
+
+### Post-Installation
+
+After installation, ensure the binary is in your PATH:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc if not already in PATH
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Verify installation:
+
+```bash
+query-crafter --version
 ```
 
 ## Autocomplete

@@ -146,42 +146,58 @@
           };
         };
 
-        # Package output
-        # packages = {
-        #   default = pkgs.rustPlatform.buildRustPackage {
-        #     pname = "query-crafter";
-        #     version = "0.1.0";
+        # Package outputs
+        packages = {
+          # Build from source
+          query-crafter = pkgs.rustPlatform.buildRustPackage {
+            pname = "query-crafter";
+            version = "0.1.0";
 
-        #     src = ./.;
+            src = ./.;
 
-        #     cargoLock = {
-        #       lockFile = ./Cargo.lock;
-        #     };
+            cargoLock = {
+              lockFile = ./Cargo.lock;
+            };
 
-        #     inherit nativeBuildInputs buildInputs;
+            inherit nativeBuildInputs buildInputs;
 
-        #     # Set library paths for build
-        #     preBuild = ''
-        #       export LIBRARY_PATH="${libPath}"
-        #       export LD_LIBRARY_PATH="${libPath}"
-        #       export PKG_CONFIG_PATH="${pkgConfigPath}"
-        #     '';
+            # Set library paths for build
+            preBuild = ''
+              export LIBRARY_PATH="${libPath}"
+              export LD_LIBRARY_PATH="${libPath}"
+              export PKG_CONFIG_PATH="${pkgConfigPath}"
+            '';
 
-        #     meta = with pkgs.lib; {
-        #       description = "A modern TUI database client with VIM keybindings";
-        #       homepage = "https://github.com/yourusername/query-crafter";
-        #       license = licenses.mit;
-        #       maintainers = [ ];
-        #     };
-        #   };
-        # };
+            meta = with pkgs.lib; {
+              description = "A modern TUI database client with VIM keybindings";
+              homepage = "https://github.com/JonnyWalker81/query-crafter";
+              license = licenses.mit;
+              maintainers = [ ];
+              mainProgram = "query-crafter";
+            };
+          };
+          
+          # Pre-built binary from GitHub releases
+          query-crafter-bin = pkgs.callPackage ./nix/query-crafter.nix { };
+          
+          # Default to building from source
+          default = self.packages.${system}.query-crafter;
+        };
 
-        # # App output for `nix run`
-        # apps = {
-        #   default = flake-utils.lib.mkApp {
-        #     drv = self.packages.${system}.default;
-        #   };
-        # };
+        # App output for `nix run`
+        apps = {
+          default = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.default;
+          };
+          
+          query-crafter = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.query-crafter;
+          };
+          
+          query-crafter-bin = flake-utils.lib.mkApp {
+            drv = self.packages.${system}.query-crafter-bin;
+          };
+        };
       }
     );
 }
