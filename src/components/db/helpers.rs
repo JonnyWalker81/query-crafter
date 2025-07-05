@@ -56,7 +56,7 @@ impl Db {
         }
     }
 
-    pub(super) fn add_to_history(&mut self, query: &str, row_count: usize) {
+    pub(super) fn add_to_history_with_time(&mut self, query: &str, row_count: usize, execution_time_ms: Option<u64>) {
         let query = query.trim().to_string();
 
         // Don't add empty queries
@@ -69,18 +69,6 @@ impl Db {
         let recent_queries = &self.query_history[self.query_history.len().saturating_sub(recent_limit)..];
 
         if !recent_queries.iter().any(|entry| entry.query == query) {
-            // Calculate execution time if we have a start time
-            let execution_time_ms = self.query_start_time.map(|start_time| {
-                let elapsed = start_time.elapsed();
-                let millis = elapsed.as_millis() as u64;
-                // Show at least 1ms for very fast queries (but not 0)
-                if elapsed.as_micros() > 0 && millis == 0 {
-                    1
-                } else {
-                    millis
-                }
-            });
-            
             let entry = QueryHistoryEntry {
                 query,
                 timestamp: SystemTime::now()
@@ -101,6 +89,7 @@ impl Db {
             self.save_query_history();
         }
     }
+
 
     // Result data helpers
     pub(super) fn column_count(&self) -> usize {

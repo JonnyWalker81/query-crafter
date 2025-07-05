@@ -262,6 +262,18 @@ impl Db {
         }
       },
       Action::QueryResult(headers, results) => {
+        // Capture the elapsed time IMMEDIATELY before it might be cleared
+        let elapsed_time = self.query_start_time.map(|start_time| {
+          let elapsed = start_time.elapsed();
+          let millis = elapsed.as_millis() as u64;
+          // Show at least 1ms for very fast queries
+          if elapsed.as_micros() > 0 && millis == 0 {
+            1
+          } else {
+            millis
+          }
+        });
+        
         self.selected_headers = headers;
         self.query_results = results;
         self.horizonal_scroll_offset = 0;
@@ -288,11 +300,13 @@ impl Db {
           self.is_explain_query = false;
         }
 
-        // Add successful query to history
+        // Add successful query to history with the captured elapsed time
         if let Some(ref query) = self.last_executed_query {
           let query_clone = query.clone();
           let result_count = self.query_results.len();
-          self.add_to_history(&query_clone, result_count);
+          
+          // Add to history with the captured elapsed time
+          self.add_to_history_with_time(&query_clone, result_count, elapsed_time);
         }
 
         // Don't automatically switch focus to results - stay in current component
