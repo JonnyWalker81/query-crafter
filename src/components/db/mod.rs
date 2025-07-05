@@ -97,6 +97,9 @@ pub struct Db {
     // EXPLAIN view state
     pub is_explain_view: bool,
     pub is_explain_query: bool,
+    
+    // Key sequence tracking for multi-key bindings
+    pub last_key: Option<crossterm::event::KeyCode>,
 }
 
 impl Default for Db {
@@ -156,6 +159,7 @@ impl Db {
             results_matcher: nucleo::Matcher::new(nucleo::Config::DEFAULT),
             is_explain_view: false,
             is_explain_query: false,
+            last_key: None,
         }
     }
 }

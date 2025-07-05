@@ -407,17 +407,50 @@ impl Db {
     }
 
     fn handle_history_tab_keys(&mut self, key: KeyEvent) -> Result<Option<Action>> {
+        // Handle Ctrl-G separately
+        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') {
+            // Go to bottom of history (last entry)
+            if !self.query_history.is_empty() {
+                self.selected_history_index = self.query_history.len() - 1;
+            }
+            self.last_key = None; // Reset key sequence
+            return Ok(None);
+        }
+        
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if !self.query_history.is_empty() && self.selected_history_index > 0 {
                     self.selected_history_index -= 1;
                 }
+                self.last_key = Some(key.code);
                 Ok(None)
             },
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.query_history.is_empty() && self.selected_history_index < self.query_history.len() - 1 {
                     self.selected_history_index += 1;
                 }
+                self.last_key = Some(key.code);
+                Ok(None)
+            },
+            KeyCode::Char('g') => {
+                // Check for 'gg' sequence
+                if self.last_key == Some(KeyCode::Char('g')) {
+                    // Go to top of history (first entry)
+                    if !self.query_history.is_empty() {
+                        self.selected_history_index = 0;
+                    }
+                    self.last_key = None; // Reset sequence
+                } else {
+                    self.last_key = Some(key.code);
+                }
+                Ok(None)
+            },
+            KeyCode::Char('G') => {
+                // Go to bottom of history (last entry) - handles both 'G' and Ctrl-G
+                if !self.query_history.is_empty() {
+                    self.selected_history_index = self.query_history.len() - 1;
+                }
+                self.last_key = Some(key.code);
                 Ok(None)
             },
             KeyCode::Enter => {
@@ -441,8 +474,10 @@ impl Db {
                     self.query_start_time = Some(std::time::Instant::now());
                     self.error_message = None;
                     // Execute the query
+                    self.last_key = None; // Reset key sequence
                     return Ok(Some(Action::HandleQuery(entry.query.clone())));
                 }
+                self.last_key = None; // Reset key sequence
                 Ok(None)
             },
             KeyCode::Char('c') => {
@@ -453,6 +488,7 @@ impl Db {
                         let _ = ctx.set_contents(entry.query.clone()).ok();
                     }
                 }
+                self.last_key = None; // Reset key sequence
                 Ok(None)
             },
             KeyCode::Char('d') => {
@@ -465,9 +501,14 @@ impl Db {
                         self.selected_history_index = self.query_history.len() - 1;
                     }
                 }
+                self.last_key = None; // Reset key sequence
                 Ok(None)
             },
-            _ => Ok(None),
+            _ => {
+                // Reset key sequence for any other key
+                self.last_key = None;
+                Ok(None)
+            },
         }
     }
 
