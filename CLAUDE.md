@@ -157,3 +157,11 @@ Components implement the `Component` trait with methods for:
 - Configuration management
 
 The main application uses an event loop that distributes events to components and processes actions through mpsc channels.
+
+## Git Commit Guidelines
+
+When creating git commits in this repository:
+- **ALWAYS** use only Jonathan Rothberg as the author: `Jonathan Rothberg <jon@join.build>`
+- **DO NOT** include Claude as a co-author
+- **DO NOT** add any additional authors or co-authors
+- Still include the "🤖 Generated with [Claude Code](https://claude.ai/code)" line at the end of commit messages for transparency
