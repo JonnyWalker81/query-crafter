@@ -66,9 +66,30 @@ impl Db {
 
         // Check if this exact query already exists in recent history (last 10 entries)
         let recent_limit = 10.min(self.query_history.len());
-        let recent_queries = &self.query_history[self.query_history.len().saturating_sub(recent_limit)..];
+        let start_idx = self.query_history.len().saturating_sub(recent_limit);
+        
+        // Look for an existing entry that we can update
+        let mut found_idx = None;
+        for (i, entry) in self.query_history[start_idx..].iter().enumerate() {
+            if entry.query == query {
+                // Update if this entry has no duration (0ms or None)
+                if entry.execution_time_ms.unwrap_or(0) == 0 && execution_time_ms.is_some() {
+                    found_idx = Some(start_idx + i);
+                    break;
+                }
+            }
+        }
 
-        if !recent_queries.iter().any(|entry| entry.query == query) {
+        if let Some(idx) = found_idx {
+            // Update the existing entry with new execution time
+            self.query_history[idx].execution_time_ms = execution_time_ms;
+            self.query_history[idx].row_count = Some(row_count);
+            self.query_history[idx].timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_else(|_| Duration::from_secs(0))
+                .as_secs();
+        } else if !self.query_history[start_idx..].iter().any(|entry| entry.query == query) {
+            // Only add new entry if query doesn't exist in recent history
             let entry = QueryHistoryEntry {
                 query,
                 timestamp: SystemTime::now()
@@ -85,9 +106,9 @@ impl Db {
             if self.query_history.len() > 100 {
                 self.query_history.drain(0..self.query_history.len() - 100);
             }
-
-            self.save_query_history();
         }
+
+        self.save_query_history();
     }
 
 
