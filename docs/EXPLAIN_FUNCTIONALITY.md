@@ -9,11 +9,16 @@ Query Crafter now supports enhanced EXPLAIN functionality for analyzing query ex
 - **Alt+X**: Prefix current query with `EXPLAIN ANALYZE`
 - If the query already has EXPLAIN, these shortcuts are smart enough not to duplicate it
 
-### 2. EXPLAIN View Toggle
-The 'x' key in Results view toggles between EXPLAIN and regular query execution:
-- **On regular query results**: Press 'x' to re-run the query with EXPLAIN prefix to see the execution plan
-- **On EXPLAIN results**: Press 'x' to remove EXPLAIN and run the actual query to see table data
-- This allows you to quickly switch between viewing data and analyzing query performance
+### 2. EXPLAIN View Toggles
+Multiple keys in Results view allow you to analyze query performance:
+- **'x' key**: Toggle between EXPLAIN and regular query execution
+  - On regular results: Adds EXPLAIN prefix to see the execution plan
+  - On EXPLAIN results: Removes EXPLAIN to see table data
+- **'a' key**: Toggle EXPLAIN ANALYZE for actual runtime statistics
+  - On regular results: Adds EXPLAIN ANALYZE prefix
+  - On EXPLAIN results: Toggles between EXPLAIN and EXPLAIN ANALYZE
+  - On EXPLAIN ANALYZE results: Removes prefix to see table data
+- **'c' key**: Copy EXPLAIN results to clipboard (when viewing EXPLAIN output)
 
 ### 3. Enhanced EXPLAIN Visualization
 
@@ -63,6 +68,8 @@ EXPLAIN SELECT * FROM users WHERE id = 1;
 | Alt+E | Add EXPLAIN to query | Query editor |
 | Alt+X | Add EXPLAIN ANALYZE to query | Query editor |
 | x | Toggle EXPLAIN view | Results view |
+| a | Toggle EXPLAIN ANALYZE | Results view |
+| c | Copy EXPLAIN results | Results view (EXPLAIN mode) |
 | j/k | Navigate rows | Results view |
 | h/l | Scroll horizontally | Results view (table mode) |
 

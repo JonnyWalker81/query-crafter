@@ -64,4 +64,6 @@ pub enum Action {
   ExplainQuery,
   ExplainAnalyzeQuery,
   ToggleExplainView,
+  ToggleExplainAnalyze,
+  CopyExplainResults,
 }

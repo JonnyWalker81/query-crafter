@@ -366,14 +366,37 @@ impl Db {
                 };
                 
                 // Check if query already starts with EXPLAIN
-                let trimmed = query.trim().to_uppercase();
-                let explain_query = if trimmed.starts_with("EXPLAIN ANALYZE") {
-                    query
-                } else if trimmed.starts_with("EXPLAIN") {
-                    // Replace EXPLAIN with EXPLAIN ANALYZE
-                    query.replacen("EXPLAIN", "EXPLAIN ANALYZE", 1)
+                let trimmed_upper = query.trim().to_uppercase();
+                let trimmed = query.trim();
+                
+                let explain_query = if trimmed_upper.starts_with("EXPLAIN") {
+                    // Parse existing EXPLAIN
+                    let mut remaining = &trimmed[7..]; // Skip "EXPLAIN"
+                    remaining = remaining.trim();
+                    
+                    if remaining.starts_with('(') {
+                        // Has options, check if ANALYZE is already there
+                        if let Some(close_paren) = remaining.find(')') {
+                            let options = &remaining[1..close_paren];
+                            if options.to_uppercase().contains("ANALYZE") {
+                                // Already has ANALYZE
+                                query
+                            } else {
+                                // Add ANALYZE to options
+                                let query_part = &remaining[close_paren + 1..].trim();
+                                format!("EXPLAIN ({}, ANALYZE) {}", options, query_part)
+                            }
+                        } else {
+                            // Malformed, use standard format
+                            format!("EXPLAIN (ANALYZE) {}", remaining)
+                        }
+                    } else {
+                        // No options, add them
+                        format!("EXPLAIN (ANALYZE) {}", remaining)
+                    }
                 } else {
-                    format!("EXPLAIN ANALYZE {}", query)
+                    // No EXPLAIN at all
+                    format!("EXPLAIN (ANALYZE) {}", trimmed)
                 };
                 
                 // Update editor with EXPLAIN ANALYZE query
@@ -583,14 +606,19 @@ impl Db {
                     let trimmed = last_query.trim();
                     let query_upper = trimmed.to_uppercase();
                     
-                    let new_query = if query_upper.starts_with("EXPLAIN ANALYZE") {
-                        // Remove EXPLAIN ANALYZE prefix (case-insensitive)
-                        let remaining = &trimmed[15..]; // Skip "EXPLAIN ANALYZE"
-                        remaining.trim().to_string()
-                    } else if query_upper.starts_with("EXPLAIN") {
-                        // Remove EXPLAIN prefix (case-insensitive)
-                        let remaining = &trimmed[7..]; // Skip "EXPLAIN"
-                        remaining.trim().to_string()
+                    let new_query = if query_upper.starts_with("EXPLAIN") {
+                        // Remove EXPLAIN and any options like (ANALYZE, BUFFERS)
+                        let mut remaining = &trimmed[7..]; // Skip "EXPLAIN"
+                        remaining = remaining.trim();
+                        
+                        // Skip parenthesized options if present
+                        if remaining.starts_with('(') {
+                            if let Some(close_paren) = remaining.find(')') {
+                                remaining = &remaining[close_paren + 1..];
+                                remaining = remaining.trim();
+                            }
+                        }
+                        remaining.to_string()
                     } else {
                         // Add EXPLAIN prefix
                         format!("EXPLAIN {}", trimmed)
@@ -604,6 +632,101 @@ impl Db {
                     return Ok(Some(Action::HandleQuery(new_query)));
                 } else {
                     self.error_message = Some("No query to toggle EXPLAIN for".to_string());
+                }
+            },
+            Action::ToggleExplainAnalyze => {
+                // Toggle between EXPLAIN ANALYZE and regular query execution
+                if let Some(ref last_query) = self.last_executed_query {
+                    let trimmed = last_query.trim();
+                    let query_upper = trimmed.to_uppercase();
+                    
+                    let new_query = if query_upper.starts_with("EXPLAIN") {
+                        // Parse existing EXPLAIN to modify it
+                        let mut remaining = &trimmed[7..]; // Skip "EXPLAIN"
+                        remaining = remaining.trim();
+                        
+                        // Check if it has parenthesized options
+                        if remaining.starts_with('(') {
+                            if let Some(close_paren) = remaining.find(')') {
+                                let options = &remaining[1..close_paren];
+                                let query_part = &remaining[close_paren + 1..].trim();
+                                
+                                // Check if ANALYZE is already in options
+                                if options.to_uppercase().contains("ANALYZE") {
+                                    // Remove entire EXPLAIN statement
+                                    query_part.to_string()
+                                } else {
+                                    // Add ANALYZE to existing options
+                                    format!("EXPLAIN ({}, ANALYZE) {}", options, query_part)
+                                }
+                            } else {
+                                // Malformed, just add EXPLAIN ANALYZE
+                                format!("EXPLAIN ANALYZE {}", remaining)
+                            }
+                        } else {
+                            // No parentheses, add ANALYZE
+                            format!("EXPLAIN (ANALYZE) {}", remaining)
+                        }
+                    } else {
+                        // Add EXPLAIN ANALYZE prefix
+                        format!("EXPLAIN (ANALYZE) {}", trimmed)
+                    };
+                    
+                    // Execute the toggled query
+                    self.last_executed_query = Some(new_query.clone());
+                    self.is_query_running = true;
+                    self.query_start_time = Some(Instant::now());
+                    self.error_message = None;
+                    return Ok(Some(Action::HandleQuery(new_query)));
+                } else {
+                    self.error_message = Some("No query to toggle EXPLAIN ANALYZE for".to_string());
+                }
+            },
+            Action::CopyExplainResults => {
+                // Copy EXPLAIN results to clipboard
+                if self.is_explain_query && !self.query_results.is_empty() {
+                    use clipboard::{ClipboardContext, ClipboardProvider};
+                    
+                    // Build the EXPLAIN output as text
+                    let mut output = String::new();
+                    
+                    // Check if it's a single-column EXPLAIN (PostgreSQL text format)
+                    if self.selected_headers.len() == 1 && 
+                       self.selected_headers[0].to_lowercase().contains("query plan") {
+                        // PostgreSQL text format - just concatenate rows
+                        for row in &self.query_results {
+                            if let Some(cell) = row.first() {
+                                output.push_str(cell);
+                                output.push('\n');
+                            }
+                        }
+                    } else {
+                        // Multi-column format - format as table
+                        // Add headers
+                        output.push_str(&self.selected_headers.join(" | "));
+                        output.push('\n');
+                        output.push_str(&"-".repeat(80));
+                        output.push('\n');
+                        
+                        // Add rows
+                        for row in &self.query_results {
+                            output.push_str(&row.join(" | "));
+                            output.push('\n');
+                        }
+                    }
+                    
+                    // Copy to clipboard
+                    match ClipboardContext::new() {
+                        Ok(mut ctx) => {
+                            match ctx.set_contents(output) {
+                                Ok(_) => self.error_message = Some("EXPLAIN results copied to clipboard".to_string()),
+                                Err(e) => self.error_message = Some(format!("Failed to copy: {}", e)),
+                            }
+                        }
+                        Err(e) => self.error_message = Some(format!("Failed to access clipboard: {}", e)),
+                    }
+                } else {
+                    self.error_message = Some("No EXPLAIN results to copy".to_string());
                 }
             },
             Action::RowJumpToTop => {

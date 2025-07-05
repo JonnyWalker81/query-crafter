@@ -81,7 +81,9 @@ fn load_default_config() -> Result<String> {
       "<Ctrl-b>": "RowPageUp",
       "<Ctrl-f>": "RowPageDown",
       "<tab>": "FocusHome",
-      "<x>": "ToggleExplainView"
+      "<x>": "ToggleExplainView",
+      "<a>": "ToggleExplainAnalyze",
+      "<c>": "CopyExplainResults"
     }
   }
 }"#))

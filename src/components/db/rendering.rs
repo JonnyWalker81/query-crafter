@@ -419,7 +419,13 @@ impl Db {
                 SelectionMode::Row => base_info.clone(), // Row mode no longer used
                 SelectionMode::Cell => format!("{} - Cell Selection - ESC to exit", base_info),
                 SelectionMode::Preview => format!("{} - Preview Mode - ESC to exit", base_info),
-                SelectionMode::Table => format!("{} - [Space/Enter] Preview [v] Cell Mode [/] Search [y] Copy", base_info),
+                SelectionMode::Table => {
+                    if self.is_explain_query {
+                        format!("{} - [x] Table View [a] EXPLAIN ANALYZE [c] Copy EXPLAIN", base_info)
+                    } else {
+                        format!("{} - [Space/Enter] Preview [v] Cell Mode [x] EXPLAIN [a] EXPLAIN ANALYZE", base_info)
+                    }
+                },
             }
         };
 
