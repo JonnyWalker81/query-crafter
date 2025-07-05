@@ -153,7 +153,7 @@ get_download_url() {
     
     # Adjust architecture naming to match releases
     case "$arch" in
-        arm64)
+        arm64|aarch64)
             arch_name="arm64"
             ;;
         x86_64)
@@ -166,6 +166,20 @@ get_download_url() {
             arch_name="armv7"
             ;;
     esac
+    
+    # Check for unsupported combinations
+    if [ "$os_name" = "linux" ] && [ "$arch_name" != "x86_64" ]; then
+        error "Pre-built binaries for Linux $arch_name are not available."
+        echo ""
+        echo "ARM Linux users should build from source:"
+        echo "  cargo install query-crafter"
+        echo ""
+        echo "Or use the development environment:"
+        echo "  git clone https://github.com/$GITHUB_REPO.git"
+        echo "  cd query-crafter"
+        echo "  cargo build --release"
+        return 1
+    fi
     
     echo "https://github.com/$GITHUB_REPO/releases/download/$version/$BINARY_NAME-$version-$os_name-$arch_name.tar.gz"
 }

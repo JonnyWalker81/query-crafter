@@ -136,20 +136,6 @@ jobs:
             binary-postfix: ".exe"
             use-cross: false
             binary-name: query-crafter
-          - os: ubuntu-latest
-            os-name: linux
-            target: aarch64-unknown-linux-gnu
-            architecture: arm64
-            binary-postfix: ""
-            use-cross: true
-            binary-name: query-crafter
-          - os: ubuntu-latest
-            os-name: linux
-            target: i686-unknown-linux-gnu
-            architecture: i686
-            binary-postfix: ""
-            use-cross: true
-            binary-name: query-crafter
 
     steps:
       - name: Checkout repository
@@ -164,6 +150,7 @@ jobs:
           profile: minimal
           override: true
       - uses: Swatinem/rust-cache@v2
+      
       - name: Cargo build
         uses: actions-rs/cargo@v1
         with:
@@ -238,8 +225,9 @@ jobs:
             target/${{ matrix.target }}/release/${{ matrix.binary-name }}-*.tar.gz
             target/${{ matrix.target }}/release/${{ matrix.binary-name }}-*.sha256
 
-
+  #not needed currently
   publish-cargo:
+    if: false
     name: Publishing to Cargo
     runs-on: ubuntu-latest
     needs: create-release
@@ -251,7 +239,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo publish
         env:
-
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   create-manifest:

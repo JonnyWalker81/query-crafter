@@ -51,11 +51,12 @@ curl -sSfL https://raw.githubusercontent.com/JonnyWalker81/query-crafter/main/in
 
 Download pre-built binaries directly from [GitHub Releases](https://github.com/JonnyWalker81/query-crafter/releases):
 
-- Linux: `query-crafter-{version}-linux-{arch}.tar.gz`
-- macOS: `query-crafter-{version}-macos-{arch}.tar.gz`
-- Windows: `query-crafter-{version}-windows-{arch}.tar.gz`
+- Linux x86_64: `query-crafter-{version}-linux-x86_64.tar.gz`
+- macOS Intel: `query-crafter-{version}-macos-x86_64.tar.gz`
+- macOS Apple Silicon: `query-crafter-{version}-macos-arm64.tar.gz`
+- Windows x86_64: `query-crafter-{version}-windows-x86_64.tar.gz`
 
-Where `{arch}` is one of: `x86_64`, `arm64`, `armv7`, `i686`
+**Note**: ARM Linux users (aarch64, armv7) should build from source using Cargo due to cross-compilation complexity with GUI dependencies.
 
 #### 3. Cargo (Build from source)
 

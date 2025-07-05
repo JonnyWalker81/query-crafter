@@ -36,9 +36,11 @@ Query Crafter provides pre-built binaries for:
 
 | Platform | Architectures |
 |----------|--------------|
-| Linux    | x86_64, aarch64 (ARM64), armv7, i686 |
+| Linux    | x86_64 |
 | macOS    | x86_64 (Intel), aarch64 (Apple Silicon) |
 | Windows  | x86_64 |
+
+**Note**: ARM Linux builds (aarch64, armv7) are not provided as pre-built binaries due to cross-compilation complexity with clipboard/GUI dependencies. ARM Linux users should build from source using Cargo.
 
 ## Installation Methods
 
