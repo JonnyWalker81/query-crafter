@@ -129,13 +129,13 @@ jobs:
             binary-postfix: ""
             use-cross: false
             binary-name: query-crafter
-          - os: windows-latest
-            os-name: windows
-            target: x86_64-pc-windows-msvc
-            architecture: x86_64
-            binary-postfix: ".exe"
-            use-cross: false
-            binary-name: query-crafter
+          # - os: windows-latest
+          #   os-name: windows
+          #   target: x86_64-pc-windows-msvc
+          #   architecture: x86_64
+          #   binary-postfix: ".exe"
+          #   use-cross: false
+          #   binary-name: query-crafter
 
     steps:
       - name: Checkout repository
