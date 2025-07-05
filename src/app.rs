@@ -231,7 +231,7 @@ impl App {
     // Get connection parameters from config or CLI
     let app_config_contents = load_config_toml()?;
     let app_config = toml::from_str::<toml::Value>(&app_config_contents)?;
-    let connections = app_config["connections"].as_array();
+    let connections = app_config.get("connections").and_then(|c| c.as_array());
 
     // Build connection string for tunneled connection
     let env_user = std::env::var("PGUSER").ok();
