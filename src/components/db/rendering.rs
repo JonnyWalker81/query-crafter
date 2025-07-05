@@ -755,12 +755,6 @@ impl Db {
             let area = self.centered_rect(80, 80, f.area());
             f.render_widget(Clear, area);
 
-            let help_block = Block::default()
-                .title("Help - Press ? to close")
-                .borders(Borders::ALL)
-                .border_style(theme::border_focused())
-                .border_type(BorderType::Rounded);
-
             let help_text = vec![
                 Line::from(vec![Span::styled("Navigation", theme::header())]),
                 Line::from(""),
@@ -768,6 +762,8 @@ impl Db {
                 Line::from("2 - Switch to Query tab"),
                 Line::from("3 - Switch to Results tab"),
                 Line::from("t - Toggle between Query and History (in Query tab)"),
+                Line::from("? - Toggle this help"),
+                Line::from("Esc - Cancel/Go back/Close popups"),
                 Line::from(""),
                 Line::from(vec![Span::styled("Tables Tab", theme::header())]),
                 Line::from(""),
@@ -777,49 +773,117 @@ impl Db {
                 Line::from("s - Select table for query"),
                 Line::from("/ - Search tables"),
                 Line::from(""),
-                Line::from(vec![Span::styled("Query Tab", theme::header())]),
+                Line::from(vec![Span::styled("Table Info Popup", theme::header())]),
                 Line::from(""),
-                Line::from("Enter - Execute query (in Normal mode)"),
+                Line::from("↑/↓, k/j - Scroll up/down"),
+                Line::from("PageUp/PageDown - Scroll by 10 lines"),
+                Line::from("c - Copy column info (columns view)"),
+                Line::from("i - Switch to schema view"),
+                Line::from("Enter - Switch to columns view"),
+                Line::from("Esc - Close popup"),
+                Line::from(""),
+                Line::from(vec![Span::styled("Query Tab - Editor", theme::header())]),
+                Line::from(""),
+                Line::from("Enter - Execute query (Normal mode)"),
+                Line::from("Ctrl+e/y, Ctrl+Enter, F5 - Execute query"),
                 Line::from("Ctrl+Space - Trigger autocomplete"),
-                Line::from("Ctrl+u - Clear query editor"),
-                Line::from("t - Toggle to History"),
+                Line::from("Ctrl+u - Clear query/line"),
+                Line::from("t - Toggle to History tab"),
+                Line::from("Alt+e - Add EXPLAIN prefix"),
+                Line::from("Alt+x - Add EXPLAIN ANALYZE"),
                 Line::from(""),
-                Line::from(vec![Span::styled("Query Formatting", theme::header())]),
+                Line::from(vec![Span::styled("Query Tab - VIM Mode", theme::header())]),
+                Line::from(""),
+                Line::from("i/a/A/I/o/O - Enter insert mode"),
+                Line::from("v/V - Visual selection mode"),
+                Line::from("h/j/k/l - Move cursor"),
+                Line::from("w/b - Move by word"),
+                Line::from("0/^/$ - Start/end of line"),
+                Line::from("gg/G - Top/bottom of file"),
+                Line::from("x/dd/D - Delete operations"),
+                Line::from("yy/p/P - Copy/paste"),
+                Line::from("u/Ctrl+r - Undo/redo"),
+                Line::from("gcc - Toggle comment"),
                 Line::from("== - Format entire query"),
-                Line::from("= (visual mode) - Format selection"),
+                Line::from("= (visual) - Format selection"),
                 Line::from("=G - Format to end of file"),
-                Line::from("=a - Toggle auto-format on execute"),
+                Line::from("=a - Toggle auto-format"),
                 Line::from(""),
                 Line::from(vec![Span::styled("History Tab", theme::header())]),
                 Line::from(""),
+                Line::from("↑/↓, k/j - Navigate entries"),
+                Line::from("gg - Go to first entry"),
+                Line::from("G, Ctrl+g - Go to last entry"),
                 Line::from("Enter - Execute selected query"),
-                Line::from("c - Copy query to editor"),
-                Line::from("y - Copy query to clipboard"),
+                Line::from("c - Copy query to clipboard"),
                 Line::from("d - Delete query from history"),
                 Line::from(""),
-                Line::from(vec![Span::styled("Results Tab", theme::header())]),
+                Line::from(vec![Span::styled("Results Tab - Table Mode", theme::header())]),
                 Line::from(""),
                 Line::from("↑/↓, k/j - Navigate rows"),
-                Line::from("←/→, h/l - Navigate columns (scroll in Table mode)"),
-                Line::from("Space - Toggle row detail view"),
-                Line::from("p - Preview row in popup"),
-                Line::from("v - Enter cell selection mode"),
+                Line::from("←/→, h/l - Scroll columns"),
+                Line::from("PageUp/Down - Move by 10 rows"),
+                Line::from("Home/End - First/last row"),
+                Line::from("Space, Enter, p - Preview row"),
+                Line::from("v - Cell selection mode"),
                 Line::from("r - Re-run last query"),
                 Line::from("/ - Search results"),
-                Line::from("e - Export results to CSV"),
+                Line::from("e - Export to CSV"),
+                Line::from("y - Copy cell value"),
+                Line::from("Y - Copy row as TSV"),
+                Line::from("x - Toggle EXPLAIN view"),
+                Line::from("a - Toggle EXPLAIN ANALYZE"),
+                Line::from("c - Copy EXPLAIN results"),
                 Line::from(""),
-                Line::from(vec![Span::styled("Copy Commands", theme::header())]),
+                Line::from(vec![Span::styled("Cell Selection Mode", theme::header())]),
                 Line::from(""),
-                Line::from("y - Copy current cell/row"),
-                Line::from("Y - Copy entire row as TSV"),
+                Line::from("↑/↓, k/j - Navigate rows"),
+                Line::from("←/→, h/l - Navigate cells"),
+                Line::from("y, c - Copy cell value"),
+                Line::from("Esc - Exit mode"),
                 Line::from(""),
-                Line::from(vec![Span::styled("General", theme::header())]),
+                Line::from(vec![Span::styled("Preview Mode", theme::header())]),
                 Line::from(""),
-                Line::from("? - Toggle this help"),
-                Line::from("Esc - Cancel/Go back"),
+                Line::from("↑/↓, k/j - Scroll fields"),
+                Line::from("PageUp/Down - Scroll by 10"),
+                Line::from("Home/End - First/last field"),
+                Line::from("Enter, Space, y - Copy value"),
+                Line::from("Y - Copy row as JSON"),
+                Line::from("Esc, p - Close preview"),
             ];
 
-            let help_paragraph = Paragraph::new(help_text)
+            // Calculate scroll limits
+            let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
+            let content_height = help_text.len();
+            let max_scroll = content_height.saturating_sub(visible_height) as u16;
+            
+            // Limit scroll offset
+            self.help_scroll_offset = self.help_scroll_offset.min(max_scroll);
+            
+            // Skip lines based on scroll offset
+            let visible_lines: Vec<Line> = help_text
+                .into_iter()
+                .skip(self.help_scroll_offset as usize)
+                .take(visible_height)
+                .collect();
+            
+            // Add scroll indicator to title if content is scrollable
+            let title = if content_height > visible_height {
+                format!("Keybindings Help (↑↓ to scroll, line {}/{})", 
+                    self.help_scroll_offset + 1, 
+                    content_height.saturating_sub(visible_height) + 1)
+            } else {
+                "Keybindings Help".to_string()
+            };
+            
+            let help_block = Block::default()
+                .title(title)
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(theme::border_focused())
+                .border_type(BorderType::Rounded);
+
+            let help_paragraph = Paragraph::new(visible_lines)
                 .block(help_block)
                 .style(theme::bg_primary())
                 .wrap(Wrap { trim: false });

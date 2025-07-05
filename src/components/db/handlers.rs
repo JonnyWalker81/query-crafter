@@ -208,7 +208,40 @@ impl Db {
         if let KeyCode::Char('?') = key.code {
             if !is_editing && !self.is_searching_tables && !self.is_searching_results {
                 self.show_help = !self.show_help;
+                if self.show_help {
+                    self.help_scroll_offset = 0; // Reset scroll when opening
+                }
                 return Ok(None);
+            }
+        }
+        
+        // Handle help popup scrolling
+        if self.show_help {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if self.help_scroll_offset > 0 {
+                        self.help_scroll_offset -= 1;
+                    }
+                    return Ok(None);
+                },
+                KeyCode::Down | KeyCode::Char('j') => {
+                    // Will be limited by render function based on content height
+                    self.help_scroll_offset += 1;
+                    return Ok(None);
+                },
+                KeyCode::PageUp => {
+                    self.help_scroll_offset = self.help_scroll_offset.saturating_sub(10);
+                    return Ok(None);
+                },
+                KeyCode::PageDown => {
+                    self.help_scroll_offset += 10;
+                    return Ok(None);
+                },
+                KeyCode::Home => {
+                    self.help_scroll_offset = 0;
+                    return Ok(None);
+                },
+                _ => {},
             }
         }
 

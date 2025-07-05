@@ -100,6 +100,9 @@ pub struct Db {
     
     // Key sequence tracking for multi-key bindings
     pub last_key: Option<crossterm::event::KeyCode>,
+    
+    // Help popup scroll state
+    pub help_scroll_offset: u16,
 }
 
 impl Default for Db {
@@ -160,6 +163,7 @@ impl Db {
             is_explain_view: false,
             is_explain_query: false,
             last_key: None,
+            help_scroll_offset: 0,
         }
     }
 }
