@@ -57,7 +57,17 @@ impl Db {
     }
 
     pub(super) fn add_to_history_with_time(&mut self, query: &str, row_count: usize, execution_time_ms: Option<u64>) {
-        let query = query.trim().to_string();
+        // Flatten the query for better display in history table
+        let query = query
+            .trim()
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");  // This normalizes multiple spaces to single spaces
 
         // Don't add empty queries
         if query.is_empty() {
