@@ -16,10 +16,16 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
@@ -96,6 +102,8 @@ jobs:
     name: Publishing for ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     needs: create-release
+    permissions:
+      contents: write
 
     strategy:
       matrix:
@@ -224,14 +232,11 @@ jobs:
       - name: Releasing assets
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ needs.create-release.outputs.version }}
           files: |
 
             target/${{ matrix.target }}/release/${{ matrix.binary-name }}-*.tar.gz
             target/${{ matrix.target }}/release/${{ matrix.binary-name }}-*.sha256
-
-        env:
-
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 
   publish-cargo:
@@ -253,6 +258,8 @@ jobs:
     name: Create Release Manifest
     runs-on: ubuntu-latest
     needs: [create-release, publish]
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
