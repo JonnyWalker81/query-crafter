@@ -28,6 +28,7 @@ pub enum Action {
   ViewTableSchema,
   TableColumnsLoaded(String, Vec<DbColumn>), // table_name, columns
   QueryResult(Vec<String>, Vec<Vec<String>>),
+  QueryExecutionTime(u64), // milliseconds
   FocusQuery,
   FocusResults,
   FocusHome,

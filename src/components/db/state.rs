@@ -261,18 +261,27 @@ impl Db {
           return Ok(None);
         }
       },
+      Action::QueryExecutionTime(elapsed_ms) => {
+        // Store the actual database execution time
+        self.last_query_execution_time = Some(elapsed_ms);
+      },
       Action::QueryResult(headers, results) => {
-        // Capture the elapsed time IMMEDIATELY before it might be cleared
-        let elapsed_time = self.query_start_time.map(|start_time| {
-          let elapsed = start_time.elapsed();
-          let millis = elapsed.as_millis() as u64;
-          // Show at least 1ms for very fast queries
-          if elapsed.as_micros() > 0 && millis == 0 {
-            1
-          } else {
-            millis
-          }
+        // Use the database-reported execution time if available, otherwise calculate from UI timing
+        let elapsed_time = self.last_query_execution_time.or_else(|| {
+          self.query_start_time.map(|start_time| {
+            let elapsed = start_time.elapsed();
+            let millis = elapsed.as_millis() as u64;
+            // Show at least 1ms for very fast queries
+            if elapsed.as_micros() > 0 && millis == 0 {
+              1
+            } else {
+              millis
+            }
+          })
         });
+        
+        // Clear the last execution time for next query
+        self.last_query_execution_time = None;
         
         self.selected_headers = headers;
         self.query_results = results;

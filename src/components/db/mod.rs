@@ -82,6 +82,7 @@ pub struct Db {
     // Query loading state
     pub is_query_running: bool,
     pub query_start_time: Option<Instant>,
+    pub last_query_execution_time: Option<u64>, // milliseconds from database
     
     // Preview popup state
     pub preview_scroll_offset: u16,
@@ -148,6 +149,7 @@ impl Db {
             table_info_scroll: 0,
             is_query_running: false,
             query_start_time: None,
+            last_query_execution_time: None,
             preview_scroll_offset: 0,
             preview_selected_index: 0,
             show_row_details: false,

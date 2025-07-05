@@ -89,6 +89,9 @@ impl Queryer for Sqlite {
   }
 
   async fn query(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    // Start timing the actual database query
+    let start_time = std::time::Instant::now();
+    
     let mut rows = sqlx::query(query).fetch(&self.conn);
 
     let mut headers = vec![];
@@ -107,6 +110,11 @@ impl Queryer for Sqlite {
       results.push(row_result);
     }
 
+    // Calculate elapsed time
+    let elapsed_ms = start_time.elapsed().as_millis() as u64;
+
+    // Send timing information first
+    dispatch(tx.clone(), Action::QueryExecutionTime(elapsed_ms)).await?;
     dispatch(tx.clone(), Action::QueryResult(headers, results)).await?;
     dispatch(tx, Action::QueryCompleted).await?;
 
@@ -114,6 +122,9 @@ impl Queryer for Sqlite {
   }
 
   async fn query_raw(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    // Start timing the actual database query
+    let start_time = std::time::Instant::now();
+    
     // Use raw_sql for multiple statement support
     let mut stream = sqlx::raw_sql(query).fetch_many(&self.conn);
     
@@ -146,6 +157,12 @@ impl Queryer for Sqlite {
         }
       }
     }
+    
+    // Calculate elapsed time
+    let elapsed_ms = start_time.elapsed().as_millis() as u64;
+    
+    // Send timing information first
+    dispatch(tx.clone(), Action::QueryExecutionTime(elapsed_ms)).await?;
     
     // If we got results from a SELECT, send them
     if !all_results.is_empty() {
@@ -239,6 +256,9 @@ impl Queryer for Postgres {
   }
 
   async fn query(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    // Start timing the actual database query
+    let start_time = std::time::Instant::now();
+    
     let mut rows = sqlx::query(query).fetch(&self.pool);
 
     let mut headers = vec![];
@@ -257,6 +277,11 @@ impl Queryer for Postgres {
       results.push(row_result);
     }
 
+    // Calculate elapsed time
+    let elapsed_ms = start_time.elapsed().as_millis() as u64;
+
+    // Send timing information first
+    dispatch(tx.clone(), Action::QueryExecutionTime(elapsed_ms)).await?;
     dispatch(tx.clone(), Action::QueryResult(headers, results)).await?;
     dispatch(tx, Action::QueryCompleted).await?;
 
@@ -264,6 +289,9 @@ impl Queryer for Postgres {
   }
 
   async fn query_raw(&self, query: &str, tx: tokio::sync::mpsc::UnboundedSender<Action>) -> Result<()> {
+    // Start timing the actual database query
+    let start_time = std::time::Instant::now();
+    
     // Use raw_sql for multiple statement support
     let mut stream = sqlx::raw_sql(query).fetch_many(&self.pool);
     
@@ -296,6 +324,12 @@ impl Queryer for Postgres {
         }
       }
     }
+    
+    // Calculate elapsed time
+    let elapsed_ms = start_time.elapsed().as_millis() as u64;
+    
+    // Send timing information first
+    dispatch(tx.clone(), Action::QueryExecutionTime(elapsed_ms)).await?;
     
     // If we got results from a SELECT, send them
     if !all_results.is_empty() {

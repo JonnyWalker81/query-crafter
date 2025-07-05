@@ -431,9 +431,7 @@ impl App {
             }
           },
           Action::HandleQuery(ref q) => {
-            // Send query started notification
-            dispatch(action_tx.clone(), Action::QueryStarted).await?;
-            
+            // Don't send QueryStarted here - it's already handled by the component that initiated the query
             if let Err(e) = query(q, action_tx.clone(), self.db.clone()).await {
               dispatch(action_tx.clone(), Action::Error(format!("Error executing query: {e:?}"))).await?;
             }
