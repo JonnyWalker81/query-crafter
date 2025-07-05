@@ -60,7 +60,9 @@ fn load_default_config() -> Result<String> {
       "<Ctrl-e>": "ExecuteQuery",
       "<Ctrl-u>": "ClearQuery",
       "<Ctrl-q>": "Quit",
-      "<tab>": "FocusResults"
+      "<tab>": "FocusResults",
+      "<Alt-e>": "ExplainQuery",
+      "<Alt-x>": "ExplainAnalyzeQuery"
     },
     "Results": {
       "<k>": "RowMoveUp",
@@ -78,7 +80,8 @@ fn load_default_config() -> Result<String> {
       "<g><g>": "RowJumpToTop",
       "<Ctrl-b>": "RowPageUp",
       "<Ctrl-f>": "RowPageDown",
-      "<tab>": "FocusHome"
+      "<tab>": "FocusHome",
+      "<x>": "ToggleExplainView"
     }
   }
 }"#))

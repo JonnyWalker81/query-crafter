@@ -61,4 +61,7 @@ pub enum Action {
   FormatQuery,
   FormatSelection,
   ToggleAutoFormat,
+  ExplainQuery,
+  ExplainAnalyzeQuery,
+  ToggleExplainView,
 }
